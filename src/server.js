@@ -36,6 +36,7 @@ const server = createApp({
   db,
   uploadDir: UPLOAD_DIR,
   projectName: process.env.PROJECT_NAME || 'Quality Management',
+  logoFile: process.env.LOGO_FILE ? path.resolve(process.env.LOGO_FILE) : null,
   cookieSecure: process.env.COOKIE_SECURE === '1',
   trustProxy: process.env.TRUST_PROXY === '1',
 });

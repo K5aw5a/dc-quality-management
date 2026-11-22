@@ -70,6 +70,8 @@ npm.cmd start
 
 The first time, also set `$env:ADMIN_USER` and `$env:ADMIN_PASSWORD` (10+ characters) to create the admin. Then open http://127.0.0.1:3000.
 
+**Company logo (optional):** point `LOGO_FILE` to a local image (`.png`, `.jpg`, `.svg`), e.g. `$env:LOGO_FILE = "C:\Users\me\Pictures\logo.png"`. It's shown in the top bar and on the sign-in page. The file is not stored in the repository. The colours follow the company palette (slate, navy and blue, with the logo's swoosh colours as accents). Each person can choose Light, Dark or Auto under their name in the top-right menu.
+
 Keep `DB_PATH` **outside OneDrive** (a synced database file can be corrupted). Uploaded files are stored in an `uploads` folder next to the database, never in Git.
 
 Add a user (in a second window):
@@ -78,7 +80,7 @@ Add a user (in a second window):
 $env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"; $env:USER_PASSWORD = "a-long-password"; npm.cmd run create-user -- jane.doe
 ```
 
-On macOS/Linux use `DB_PATH=... npm start`. Other settings: `PORT` (3000), `HOST` (127.0.0.1), `UPLOAD_DIR`, `COOKIE_SECURE=1` behind HTTPS, `TRUST_PROXY=1` behind nginx.
+On macOS/Linux use `DB_PATH=... npm start`. Other settings: `LOGO_FILE`, `PORT` (3000), `HOST` (127.0.0.1), `UPLOAD_DIR`, `COOKIE_SECURE=1` behind HTTPS, `TRUST_PROXY=1` behind nginx.
 
 ### OCR settings
 

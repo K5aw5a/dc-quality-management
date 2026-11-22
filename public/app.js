@@ -90,6 +90,35 @@ function cellFor(tab, field, row) {
 
 /* ---------- auth & boot ---------- */
 
+// Project name and (optional) logo, also shown on the login page.
+async function loadBrand() {
+  try {
+    const b = await fetch('/api/brand').then((r) => r.json());
+    for (const img of document.querySelectorAll('.brand-logo')) {
+      if (b.logo) { img.src = '/brand/logo'; img.alt = b.project; img.hidden = false; }
+    }
+    for (const w of document.querySelectorAll('.wordmark')) { w.textContent = b.project; w.hidden = !!b.logo; }
+    $('#project-name').textContent = b.project;
+  } catch { /* keep defaults */ }
+}
+loadBrand();
+
+// Appearance: auto (follows Windows) / light / dark, remembered in this browser.
+function setTheme(t) {
+  if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('qm-theme', t); } catch { /* not saved */ }
+  for (const b of document.querySelectorAll('[data-theme-set]')) b.setAttribute('aria-pressed', String(b.dataset.themeSet === t));
+}
+for (const b of document.querySelectorAll('[data-theme-set]')) b.addEventListener('click', () => setTheme(b.dataset.themeSet));
+setTheme(document.documentElement.getAttribute('data-theme') || 'auto');
+
+// Dropdown menus: one open at a time, close on outside click or navigation.
+const closeMenus = (except) => { for (const d of document.querySelectorAll('details.menu[open]')) if (d !== except) d.removeAttribute('open'); };
+for (const d of document.querySelectorAll('details.menu')) d.addEventListener('toggle', () => { if (d.open) closeMenus(d); });
+document.addEventListener('click', (e) => { if (!e.target.closest('details.menu')) closeMenus(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+
 function showLogin() {
   $('#app-view').hidden = true;
   $('#login-view').hidden = false;
@@ -120,6 +149,7 @@ async function start() {
   $('#project-name').textContent = me.project;
   document.title = `${me.project} – Quality Dashboard`;
   $('#whoami').textContent = `${S.user.username} (${S.user.role})`;
+  $('#avatar').textContent = S.user.username.slice(0, 1);
   $('#login-view').hidden = true;
   $('#app-view').hidden = false;
   route();
@@ -150,6 +180,8 @@ function route() {
   for (const a of document.querySelectorAll('.nav a')) {
     if (a.dataset.route === key) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
+  for (const d of document.querySelectorAll('details.menu[data-group]')) d.classList.toggle('current', key.startsWith(`${d.dataset.group}/`));
+  closeMenus();
   window.scrollTo(0, 0);
 }
 

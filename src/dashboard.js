@@ -4,7 +4,7 @@ const registry = require('./registry');
 const { daysBetween } = require('./schema');
 const R = require('./resources');
 
-const titleOf = (T, row) => T.display.map((f) => row[f]).filter((v) => v !== null && v !== undefined && v !== '').join(' – ');
+const titleOf = (T, row, skip = null) => T.display.filter((f) => f !== skip).map((f) => row[f]).filter((v) => v !== null && v !== undefined && v !== '').join(' – ');
 
 function areaSort(a, b) {
   const na = parseFloat(a); const nb = parseFloat(b);
@@ -99,7 +99,7 @@ function dashboard(db) {
   const ageing = sub ? {
     register: sub.name, label: sub.label, open: inReview.length, buckets,
     oldest: inReview.sort((a, b) => b.age_days - a.age_days).slice(0, 10)
-      .map((r) => ({ id: r.id, ref: r[sub.key[0]], title: titleOf(sub, r), days: r.age_days, blocker: sub.reason ? r[sub.reason] : null })),
+      .map((r) => ({ id: r.id, ref: r[sub.key[0]], title: titleOf(sub, r, sub.key[0]) || r[sub.key[0]], days: r.age_days, blocker: sub.reason ? r[sub.reason] : null })),
   } : null;
 
   // Deliveries expected in the next 21 days (and late ones)
@@ -108,7 +108,7 @@ function dashboard(db) {
     .filter((r) => !del.done.includes(r[del.statusField]) && r[del.due] && daysBetween(today, r[del.due]) <= 21)
     .sort((a, b) => a[del.due].localeCompare(b[del.due]))
     .map((r) => ({
-      id: r.id, po: r.po ?? null, item: titleOf(del, r), expected: r[del.due], days: daysBetween(today, r[del.due]),
+      id: r.id, po: r.po ?? null, item: titleOf(del, r, 'po') || r.po, expected: r[del.due], days: daysBetween(today, r[del.due]),
       submittalApproved: r.submittal_approved ?? null, mirDone: r.mir_done ?? null,
     })) : [];
 

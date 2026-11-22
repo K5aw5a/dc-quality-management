@@ -5,13 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Quality Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
+  <script src="/theme.js"></script>
   <script src="/app.js" defer></script>
   <script src="/settings.js" defer></script>
 </head>
 <body>
   <section id="login-view" class="login" hidden>
     <form id="login-form" class="card">
-      <h1>Quality Dashboard</h1>
+      <div class="login-brand"><img class="brand-logo" alt="" hidden><span class="wordmark">Quality</span></div>
+      <div class="brand-stripe"></div>
+      <h1>Quality dashboard</h1>
       <p class="muted">Sign in to continue</p>
       <label>Username <input name="username" autocomplete="username" required></label>
       <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
@@ -21,23 +24,44 @@
   </section>
 
   <div id="app-view" class="shell" hidden>
-    <aside class="side">
-      <div class="brand"><strong id="project-name">Quality</strong><span class="muted small">Quality dashboard</span></div>
-      <nav class="nav" aria-label="Main">
-        <a href="#/" data-route="dashboard">Dashboard</a>
-        <a href="#/upload" data-route="upload">Upload document</a>
-        <a href="#/files" data-route="files">Uploaded files</a>
-        <p class="nav-head">Registers</p>
-        <div id="nav-registers"></div>
-        <p class="nav-head">Settings</p>
-        <a href="#/settings/registers" data-route="settings/registers">Edit registers</a>
-        <a href="#/settings/doctypes" data-route="settings/doctypes">Document types</a>
-      </nav>
-      <div class="side-foot">
-        <span id="whoami" class="muted small"></span>
-        <button id="logout" type="button" class="link">Sign out</button>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#/">
+          <img class="brand-logo" alt="" hidden>
+          <span class="brand-text"><strong id="project-name">Quality</strong><span>Quality dashboard</span></span>
+        </a>
+        <nav class="nav" aria-label="Main">
+          <a href="#/" data-route="dashboard">Dashboard</a>
+          <a href="#/upload" data-route="upload">Upload</a>
+          <a href="#/files" data-route="files">Files</a>
+          <details class="menu" data-group="r">
+            <summary>Registers</summary>
+            <div class="menu-panel" id="nav-registers"></div>
+          </details>
+          <details class="menu" data-group="settings">
+            <summary>Settings</summary>
+            <div class="menu-panel">
+              <a href="#/settings/registers" data-route="settings/registers">Edit registers</a>
+              <a href="#/settings/doctypes" data-route="settings/doctypes">Document types</a>
+            </div>
+          </details>
+        </nav>
+        <span class="spacer"></span>
+        <details class="menu user-menu">
+          <summary><span class="avatar" id="avatar"></span><span id="whoami"></span></summary>
+          <div class="menu-panel right">
+            <p class="menu-label">Appearance</p>
+            <div class="theme-switch" role="group" aria-label="Appearance">
+              <button type="button" data-theme-set="auto">Auto</button>
+              <button type="button" data-theme-set="light">Light</button>
+              <button type="button" data-theme-set="dark">Dark</button>
+            </div>
+            <button id="logout" type="button" class="menu-item">Sign out</button>
+          </div>
+        </details>
       </div>
-    </aside>
+      <div class="brand-stripe"></div>
+    </header>
 
     <main id="main">
       <section id="view-dashboard" hidden></section>

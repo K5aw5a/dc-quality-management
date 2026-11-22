@@ -116,8 +116,12 @@ function exportSheet(db, tabName, { empty = false } = {}) {
 
 function createApp({
   db, publicDir = path.join(__dirname, '..', 'public'), uploadDir = path.join(os.tmpdir(), 'dc-quality-uploads'),
-  cookieSecure = false, trustProxy = false, projectName = 'Quality Management',
+  cookieSecure = false, trustProxy = false, projectName = 'Quality Management', logoFile = null,
 }) {
+  const LOGO_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.gif': 'image/gif' };
+  const logoType = logoFile ? LOGO_TYPES[path.extname(logoFile).toLowerCase()] : null;
+  if (logoFile && !logoType) console.warn(`LOGO_FILE must be .png, .jpg, .svg, .webp or .gif: ${logoFile}`);
+  const hasLogo = () => !!(logoType && fs.existsSync(logoFile));
   const limiter = new auth.LoginLimiter();
 
   async function handleUploads(req, res, url, parts, user) {
@@ -216,6 +220,7 @@ function createApp({
       : req.socket.remoteAddress;
 
     if (parts[0] === 'health' && method === 'GET') return send(res, 200, { ok: true });
+    if (parts[0] === 'brand' && method === 'GET') return send(res, 200, { project: projectName, logo: hasLogo() });
 
     if (parts[0] === 'login' && method === 'POST') {
       if (limiter.blocked(ip)) throw new HttpError(429, 'too many failed logins; try again later');
@@ -278,6 +283,11 @@ function createApp({
     try {
       if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'method not allowed' });
+      if (url.pathname === '/brand/logo') {
+        if (!hasLogo()) return send(res, 404, { error: 'no logo configured' });
+        res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': logoType, 'Cache-Control': 'max-age=3600' });
+        return fs.createReadStream(logoFile).pipe(res);
+      }
       return serveStatic(publicDir, url.pathname, res);
     } catch (err) {
       if (err instanceof HttpError) return send(res, err.status, { error: err.message, ...err.extra });
