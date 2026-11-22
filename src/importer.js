@@ -84,7 +84,9 @@ function dataRows(table, headerRow, keyCols) {
   // PDF: re-split each line by the header's column positions, and fold
   // wrapped lines (no value in the key column) into the row above.
   const head = table.layout[headerRow];
-  const bounds = head.cells.map((c, i) => (i === 0 ? -Infinity : (head.cells[i - 1].endX + c.x) / 2));
+  // A column starts just left of its heading (table text is usually left-aligned
+  // under the heading and may run wider than it).
+  const bounds = head.cells.map((c, i) => (i === 0 ? -Infinity : Math.max(head.cells[i - 1].endX, c.x - 0.4 * head.size)));
   const headText = head.cells.map((c) => c.text).join('|');
   const out = [];
   for (let li = headerRow + 1; li < table.layout.length; li++) {

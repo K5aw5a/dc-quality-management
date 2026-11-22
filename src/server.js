@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('node:path');
 const { openDb } = require('./db');
 const { createApp } = require('./app');
 const { createUser } = require('./auth');
@@ -27,8 +28,13 @@ if (userCount === 0) {
   }
 }
 
+// Uploaded files live next to the database (outside git), unless UPLOAD_DIR is set.
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(path.dirname(path.resolve(DB_PATH)), 'uploads');
+
 const server = createApp({
   db,
+  uploadDir: UPLOAD_DIR,
+  projectName: process.env.PROJECT_NAME || 'Quality Management',
   cookieSecure: process.env.COOKIE_SECURE === '1',
   trustProxy: process.env.TRUST_PROXY === '1',
 });
