@@ -14,8 +14,14 @@ const db = openDb(DB_PATH);
 const userCount = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
 if (userCount === 0) {
   if (process.env.ADMIN_USER && process.env.ADMIN_PASSWORD) {
-    createUser(db, process.env.ADMIN_USER, process.env.ADMIN_PASSWORD, 'admin');
-    console.log(`Created admin user "${process.env.ADMIN_USER}"`);
+    try {
+      createUser(db, process.env.ADMIN_USER, process.env.ADMIN_PASSWORD, 'admin');
+      console.log(`Created admin user "${process.env.ADMIN_USER}"`);
+    } catch (err) {
+      console.error(`Could not create admin user from ADMIN_USER/ADMIN_PASSWORD: ${err.message}`);
+      console.error('Usernames: 2-64 letters, digits, . _ @ -   Passwords: at least 10 characters.');
+      process.exit(1);
+    }
   } else {
     console.warn('No users exist. Set ADMIN_USER and ADMIN_PASSWORD, or run: npm run create-user -- <name> --admin');
   }
