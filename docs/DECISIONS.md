@@ -36,3 +36,16 @@ Short records of the decisions that shape the system: what was decided, why, and
 ### D7: Case-insensitive usernames
 **Decision:** `COLLATE NOCASE` on `users.username`.
 **Why:** Lesson carried over from Future Aero Lab, where a case-sensitivity bug broke login during rollout.
+
+### D8: Write our own file readers instead of using libraries
+**Decision:** .xlsx/.docx (zip + XML) and PDF text extraction are implemented in `src/parsers/` with no dependencies.
+**Why:** The tool runs on an admin-managed laptop where installing packages is hard, and keeping zero dependencies keeps setup to just `git pull`. Office files are zipped XML, which is small to read. PDF text extraction is the hard part: ours covers text PDFs exported from Word, Excel and reporting tools.
+**Trade-off:** No OCR, no encrypted PDFs, and unusual PDF layouts may need the column mapping fixed in the preview. Revisit (e.g. vendor pdf.js) if real documents keep failing.
+
+### D9: Every import is previewed and approved by a person
+**Decision:** Uploading only reads a file. Writing happens on an explicit Import, after the user has seen new/updated/unchanged rows and can remap columns or untick rows.
+**Why:** Registers are audit evidence; a wrong automatic mapping must never silently overwrite good data. Same principle as the human-reviewed HubSpot sync at Future Aero Lab. Empty cells never clear values, and re-imports only apply differences.
+
+### D10: Uploaded files and data stay out of Git
+**Decision:** Files are stored by SHA-256 in `UPLOAD_DIR` (default: next to the database). Fixtures are synthetic.
+**Why:** The repository is public and the documents belong to client projects.

@@ -17,17 +17,37 @@ nginx (TLS, HSTS)  ──►  Node http server (src/app.js)
 
 One process and one database file, with no runtime dependencies. Node's built-in `node:sqlite` provides the database driver.
 
+## Document import
+
+```
+upload (raw bytes) ─► uploads/<sha256>  (content-addressed, outside git)
+        │
+        ▼
+parsers/  xlsx · csv · docx · pdf  ─►  { tables: [[cells]], lines, text }
+        │
+        ▼
+importer.analyse ─ header row detection (scans 60 rows) ─ column → field matching (synonyms in schema.js)
+                 ─ cell conversion (values.js) ─ plan: create / update / unchanged / skip by register key
+        │  preview to the user (they can remap columns, change header row/sheet, untick rows)
+        ▼
+importer.commit ─ one transaction; each change logged as 'import' with the source upload id
+```
+
+PDFs: text is extracted from content streams (Flate/LZW/ASCII filters, object streams, ToUnicode CMaps, font widths), grouped into lines by y position and into cells by gaps. Once the header row is known, each line is re-split against the header's column positions, and wrapped lines (no value in the key column) are folded into the row above.
+
+Single documents (certificates, forms) use `Label: value` pairs and two-column table rows, plus per-register patterns (e.g. NCR/ITP numbers), and are saved through an editable form.
+
 ## Schema-driven modules
 
-`src/schema.js` describes each module: its fields, types (`string`, `text`, `enum`, `date`, `url`, `ref`), required flags, defaults and list columns. From that one definition:
+`src/schema.js` describes each register: its fields, types (`string`, `text`, `enum`, `date`, `number`, `bool`), column synonyms, required flags, defaults and list columns. From that one definition:
 
-- `db.js` creates the tables in the initial migration,
+- `db.js` creates missing tables and adds missing columns at start-up (additive only),
 - `resources.js` validates input and decides which fields can be filtered on,
 - the frontend renders the tabs, tables, filters and edit forms by fetching `/api/schema`.
 
 Every module table also gets `id`, `version`, `created_by`, `created_at` and `updated_at`.
 
-**Changing the schema after deployment:** add a new migration function to `MIGRATIONS` in `db.js` (for example `ALTER TABLE trackers ADD COLUMN discipline TEXT`) as well as updating `schema.js`. Migrations are append-only and tracked with `PRAGMA user_version`.
+**Changing the schema:** adding a field or register in `schema.js` is enough; it is created on next start. Renames, type changes and removals need an explicit migration in `MIGRATIONS` (append-only, tracked with `PRAGMA user_version`). v0.1's generic tables are kept as `legacy_*`.
 
 ## Concurrency
 

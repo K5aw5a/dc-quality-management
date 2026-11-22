@@ -1,39 +1,94 @@
 'use strict';
 
-// Vanilla JS client. Forms and tables are generated from /api/schema, so the
-// frontend needs no changes when a field is added to src/schema.js.
-// All record data is rendered with textContent (never innerHTML).
+// Vanilla JS client. Registers, forms and the import preview are generated
+// from /api/schema. All data is rendered with textContent (never innerHTML).
 
-const $ = (sel) => document.querySelector(sel);
-const state = { user: null, schema: null, current: null, rows: [], refCache: {}, editing: null };
+const $ = (sel, root = document) => root.querySelector(sel);
+const S = { user: null, tabs: null, order: [], current: null, rows: [], editing: null, uploads: null };
 
-const GOOD = new Set(['approved', 'approved_as_noted', 'passed', 'closed', 'current', 'pass']);
-const BAD = new Set(['rejected', 'failed', 'blocked', 'fail', 'critical', 'withdrawn']);
-const WARN = new Set(['revise_resubmit', 'passed_with_findings', 'under_review', 'in_progress', 'high', 'major', 'observation']);
-const DONE = new Set(['approved', 'approved_as_noted', 'passed', 'passed_with_findings', 'closed', 'cancelled', 'rejected']);
+/* ---------- helpers ---------- */
 
-async function api(path, { method = 'GET', body } = {}) {
+async function api(path, { method = 'GET', body, raw } = {}) {
   const res = await fetch('/api/' + path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: raw ? { 'Content-Type': 'application/octet-stream' } : body ? { 'Content-Type': 'application/json' } : {},
+    body: raw || (body ? JSON.stringify(body) : undefined),
     credentials: 'same-origin',
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
-  if (res.status === 401 && path !== 'login') { showLogin(); }
+  if (res.status === 401 && path !== 'login') showLogin();
   if (!res.ok) { const e = new Error(data.error || res.statusText); e.status = res.status; e.data = data; throw e; }
   return data;
 }
 
-const human = (v) => String(v).replace(/_/g, ' ');
-const el = (tag, props = {}, ...kids) => {
-  const n = Object.assign(document.createElement(tag), props);
-  for (const k of kids) if (k != null) n.append(k);
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else if (k in n && k !== 'list') n[k] = v;
+    else n.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) if (c !== null && c !== undefined && c !== false) n.append(c);
   return n;
-};
-const today = () => new Date().toISOString().slice(0, 10);
+}
 
-/* ---------- auth ---------- */
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const human = (v) => String(v).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+const fmtDate = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = String(iso).slice(0, 10).split('-');
+  return `${d}/${m}/${y}`;
+};
+const fmtWhen = (ts) => (ts ? fmtDate(ts) + ' ' + String(ts).slice(11, 16) : '');
+const enumLabel = (def, v) => (v == null ? '' : def?.labels?.[v] || human(v));
+const toneOf = (def, v) => def?.tones?.[v] || 'muted';
+const badge = (text, tone = 'muted') => el('span', { class: `badge tone-${tone}`, text });
+const statusField = (tab) => Object.keys(S.tabs[tab].fields).find((f) => f.endsWith('status'));
+const titleOf = (tab, row) => S.tabs[tab].display.map((f) => row[f]).filter((v) => v != null && v !== '').join(' – ');
+
+function daysFrom(iso) { return Math.round((Date.parse(iso) - Date.parse(today())) / 86400000); }
+
+function valueNode(tab, field, v, row) {
+  const t = S.tabs[tab];
+  const def = t.fields[field] || t.computed?.[field];
+  if (v === null || v === undefined || v === '') return '';
+  if (def?.type === 'enum') return badge(enumLabel(def, v), toneOf(def, v));
+  if (def?.type === 'bool') return badge(v === 'yes' ? 'Yes' : 'No', v === 'yes' ? 'ok' : 'warn');
+  if (def?.type === 'date') return fmtDate(v);
+  if (def?.type === 'number') return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+  return String(v);
+}
+
+function textOf(tab, field, v) {
+  const def = S.tabs[tab].fields[field];
+  if (v === null || v === undefined || v === '') return '(empty)';
+  if (def?.type === 'enum') return enumLabel(def, v);
+  if (def?.type === 'bool') return v === 'yes' ? 'Yes' : 'No';
+  if (def?.type === 'date') return fmtDate(v);
+  return String(v);
+}
+
+function cellFor(tab, field, row) {
+  const t = S.tabs[tab];
+  const def = t.fields[field] || t.computed?.[field];
+  const v = row[field];
+  const td = el('td', {}, valueNode(tab, field, v, row));
+  if (def?.type === 'number') td.className = 'num';
+  if (def?.type === 'text' || (def?.type === 'string' && String(v || '').length > 40)) { td.className = 'clip'; td.title = v || ''; }
+  if (field === t.due && v) {
+    const done = t.done.includes(row[statusField(tab)]);
+    const d = daysFrom(v);
+    if (!done && d < 0) td.className = 'overdue';
+    else if (!done && d <= (t.soonDays || 14)) td.className = 'soon';
+  }
+  if (field === 'days_in_review' && v != null) td.className = v > 28 ? 'num overdue' : v > 14 ? 'num soon' : 'num';
+  return td;
+}
+
+/* ---------- auth & boot ---------- */
 
 function showLogin() {
   $('#app-view').hidden = true;
@@ -46,206 +101,591 @@ $('#login-form').addEventListener('submit', async (e) => {
   const f = new FormData(e.target);
   $('#login-error').textContent = '';
   try {
-    const { user } = await api('login', { method: 'POST', body: { username: f.get('username'), password: f.get('password') } });
+    await api('login', { method: 'POST', body: { username: f.get('username'), password: f.get('password') } });
     e.target.reset();
-    await start(user);
+    await start();
   } catch (err) { $('#login-error').textContent = err.message; }
 });
 
 $('#logout').addEventListener('click', async () => {
   await api('logout', { method: 'POST', body: {} }).catch(() => {});
-  state.user = null;
+  S.user = null;
   showLogin();
 });
 
-/* ---------- layout ---------- */
-
-async function start(user) {
-  state.user = user;
-  state.schema = (await api('schema')).resources;
-  $('#whoami').textContent = `${user.username} (${user.role})`;
+async function start() {
+  const me = await api('me');
+  S.user = me.user;
+  const schema = await api('schema');
+  S.tabs = schema.tabs; S.order = schema.order;
+  $('#project-name').textContent = me.project;
+  document.title = `${me.project} – Quality Dashboard`;
+  $('#whoami').textContent = `${S.user.username} (${S.user.role})`;
+  $('#nav-registers').replaceChildren(...S.order.map((t) => el('a', { href: `#/r/${t}`, text: S.tabs[t].label, 'data-route': `r/${t}` })));
   $('#login-view').hidden = true;
   $('#app-view').hidden = false;
-  const tabs = $('#tabs');
-  tabs.replaceChildren(...Object.entries(state.schema).map(([name, def]) => {
-    const b = el('button', { type: 'button', textContent: def.label });
-    b.dataset.name = name;
-    b.addEventListener('click', () => { location.hash = name; });
-    return b;
-  }));
   route();
 }
 
-window.addEventListener('hashchange', () => state.user && route());
+window.addEventListener('hashchange', () => S.user && route());
 
 function route() {
-  const name = location.hash.slice(1);
-  select(Object.hasOwn(state.schema, name) ? name : Object.keys(state.schema)[0]);
+  const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
+  const parts = path.split('/').filter(Boolean);
+  const params = new URLSearchParams(query || '');
+  for (const s of document.querySelectorAll('main > section')) s.hidden = true;
+  let key = parts[0] || 'dashboard';
+  if (key === 'r' && S.tabs[parts[1]]) {
+    key = `r/${parts[1]}`;
+    showRegister(parts[1], parts[2] ? Number(parts[2]) : null);
+  } else if (key === 'upload') showUpload(parts[1] ? Number(parts[1]) : null, params);
+  else if (key === 'files') showFiles();
+  else { key = 'dashboard'; showDashboard(); }
+  for (const a of document.querySelectorAll('.nav a')) {
+    if (a.dataset.route === key) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  }
+  window.scrollTo(0, 0);
 }
 
-function select(name) {
-  state.current = name;
-  const def = state.schema[name];
-  for (const b of $('#tabs').children) {
-    if (b.dataset.name === name) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
+function show(id) { const s = $(id); s.hidden = false; return s; }
+
+/* ---------- dashboard ---------- */
+
+async function showDashboard() {
+  const v = show('#view-dashboard');
+  v.replaceChildren(el('p', { class: 'muted', text: 'Loading…' }));
+  let d;
+  try { d = await api('dashboard'); } catch (err) { v.replaceChildren(el('p', { class: 'error', text: err.message })); return; }
+  const r = d.readiness;
+  const atGc14 = d.ageing.buckets.slice(2).reduce((s, b) => s + b.count, 0);
+  const totalOverdue = d.cards.reduce((s, c) => s + c.overdue, 0);
+  const totalHold = d.cards.reduce((s, c) => s + c.onHold, 0);
+  const kpi = (label, value, sub, tone) => el('div', { class: `kpi tone-${tone}` },
+    el('p', { class: 'label', text: label }), el('p', { class: 'value', text: value }), sub ? el('p', { class: 'sub', text: sub }) : null);
+
+  const head = el('div', { class: 'page-head' },
+    el('div', {}, el('h1', { text: 'Quality dashboard' }), el('p', { class: 'muted', text: `Status as of ${fmtDate(d.today)}` })),
+    el('div', { class: 'actions' },
+      el('a', { class: 'button', href: '/api/export.xlsx', download: '', text: 'Export all registers (.xlsx)' }),
+      el('a', { class: 'button primary', href: '#/upload', text: 'Upload document' })));
+
+  const kpis = el('div', { class: 'kpis' },
+    kpi('Audit readiness', r.applicable ? `${r.pct}%` : '–', r.applicable ? `${r.counts.ready} of ${r.applicable} items ready` : 'Import your audit checklist',
+      !r.applicable ? 'muted' : r.pct >= 80 ? 'ok' : r.pct >= 50 ? 'warn' : 'bad'),
+    kpi('Missing', r.counts.missing, 'audit items', r.counts.missing ? 'bad' : 'ok'),
+    kpi('Partial', r.counts.partial, 'audit items', r.counts.partial ? 'warn' : 'ok'),
+    kpi('Not checked', r.counts.not_checked, 'audit items', 'muted'),
+    kpi('Overdue', totalOverdue, 'across registers', totalOverdue ? 'bad' : 'ok'),
+    kpi('On hold / blocked', totalHold, 'across registers', totalHold ? 'warn' : 'ok'),
+    kpi('Submittals > 14 days at GC', atGc14, `${d.ageing.open} in review`, atGc14 ? 'warn' : 'ok'));
+
+  // readiness by area
+  const segs = ['ready', 'partial', 'missing', 'not_checked', 'n_a'];
+  const segLabel = { ready: 'Ready', partial: 'Partial', missing: 'Missing', not_checked: 'Not checked', n_a: 'N/A' };
+  const areaPanel = el('div', { class: 'panel' },
+    el('div', { class: 'panel-head' }, el('h2', { text: 'Audit readiness by area' }), el('a', { href: '#/r/checklist', class: 'small', text: 'Open checklist' })),
+    r.total ? el('div', { class: 'areas' }, r.areas.map((a) => {
+      const bar = el('div', { class: 'bar', title: segs.map((s) => `${segLabel[s]}: ${a[s] || 0}`).join(' · ') });
+      for (const s of segs) if (a[s]) { const sp = el('span', { class: `seg-${s}` }); sp.style.width = `${(a[s] / a.total) * 100}%`; bar.append(sp); }
+      return el('div', { class: 'area-row' }, el('span', { text: a.area }), bar, el('span', { class: 'pct', text: `${a.pct}%` }));
+    })) : el('p', { class: 'empty' }, 'No audit checklist yet. ', el('a', { href: '#/upload?tab=checklist', text: 'Upload the checklist workbook' })),
+    r.total ? el('div', { class: 'legend' }, segs.map((s) => el('span', {}, el('i', { class: `seg-${s}` }), segLabel[s]))) : null);
+
+  const attention = el('div', { class: 'panel' },
+    el('div', { class: 'panel-head' }, el('h2', { text: `Missing & partial audit items (${r.attention.length})` })),
+    r.attention.length ? table(['Ref', 'Item', 'Status', 'Gap / action needed', 'Owner'], r.attention.slice(0, 40).map((a) => ({
+      href: `#/r/checklist/${a.id}`,
+      cells: [a.ref, a.item, badge(a.status === 'missing' ? 'Missing' : 'Partial', a.status === 'missing' ? 'bad' : 'warn'), a.gap || '—', a.owner || ''],
+      clip: [1, 3],
+    }))) : el('p', { class: 'muted', text: r.total ? 'Nothing missing or partial.' : 'Appears once the checklist is imported.' }));
+
+  // register cards
+  const cards = el('div', { class: 'cards' }, d.cards.map((c) => el('a', { class: `reg-card tone-${c.tone}`, href: `#/r/${c.tab}` },
+    el('h3', { text: c.label }),
+    el('span', { class: 'count', text: c.total }), el('span', { class: 'muted small', text: c.total === 1 ? ' record' : ' records' }),
+    el('div', { class: 'chips' },
+      c.overdue ? badge(`${c.overdue} overdue`, 'bad') : null,
+      c.dueSoon ? badge(`${c.dueSoon} due soon`, 'warn') : null,
+      c.onHold ? badge(`${c.onHold} on hold`, 'warn') : null,
+      !c.total ? badge('empty', 'muted') : null,
+      c.total && !c.overdue && !c.dueSoon && !c.onHold ? badge('OK', 'ok') : null),
+    el('p', { class: 'muted small', text: c.lastUpload ? `Last upload ${fmtDate(c.lastUpload)}` : c.updated ? `Updated ${fmtDate(c.updated)}` : 'No data yet' }))));
+
+  const itemRows = (list, dateLabel) => list.map((o) => ({
+    href: `#/r/${o.tab}/${o.id}`,
+    cells: [o.tabLabel, o.title, `${fmtDate(o.date)}`, badge(o.days < 0 ? `${-o.days} d late` : o.days === 0 ? 'today' : `in ${o.days} d`, o.days < 0 ? 'bad' : 'warn'), o.owner || ''],
+    clip: [1],
+  }));
+  const overdue = el('div', { class: 'panel' }, el('h2', { text: `Overdue (${d.overdue.length})` }),
+    d.overdue.length ? table(['Register', 'Item', 'Date', '', 'Owner'], itemRows(d.overdue)) : el('p', { class: 'muted', text: 'Nothing overdue.' }));
+  const soon = el('div', { class: 'panel' }, el('h2', { text: `Due soon (${d.dueSoon.length})` }),
+    d.dueSoon.length ? table(['Register', 'Item', 'Date', '', 'Owner'], itemRows(d.dueSoon)) : el('p', { class: 'muted', text: 'Nothing due in the next 2 weeks (30 days for calibration and expiry).' }));
+  const hold = el('div', { class: 'panel' }, el('h2', { text: `On hold & why (${d.onHold.length})` }),
+    d.onHold.length ? table(['Register', 'Item', 'Status', 'Reason'], d.onHold.map((o) => ({
+      href: `#/r/${o.tab}/${o.id}`,
+      cells: [o.tabLabel, o.title, badge(human(o.status), 'bad'), o.reason || '— no reason recorded —'], clip: [1, 3],
+    }))) : el('p', { class: 'muted', text: 'Nothing on hold.' }));
+
+  const maxB = Math.max(1, ...d.ageing.buckets.map((b) => b.count));
+  const bucketTone = ['ok', 'warn', 'bad', 'bad'];
+  const ageing = el('div', { class: 'panel' },
+    el('div', { class: 'panel-head' }, el('h2', { text: `Submittals waiting at the GC (${d.ageing.open})` }), el('a', { href: '#/r/submittals', class: 'small', text: 'Open register' })),
+    el('div', { class: 'hbars' }, d.ageing.buckets.map((b, i) => {
+      const fill = el('div', { class: 'fill' }); fill.style.width = `${(b.count / maxB) * 100}%`;
+      fill.style.background = `var(--${bucketTone[i]}-bar)`;
+      return el('div', { class: 'hbar' }, el('span', { text: b.label }), el('div', { class: 'track' }, fill), el('span', { class: 'num', text: b.count }));
+    })),
+    d.ageing.oldest.length ? table(['Ref', 'Title', 'Days', 'Blocker'], d.ageing.oldest.map((s) => ({
+      href: `#/r/submittals/${s.id}`, cells: [s.ref, s.title, badge(`${s.days} d`, s.days > 28 ? 'bad' : s.days > 14 ? 'warn' : 'ok'), s.blocker || ''], clip: [1, 3],
+    }))) : el('p', { class: 'muted', text: 'No submittals in review.' }));
+
+  const deliveries = el('div', { class: 'panel' },
+    el('div', { class: 'panel-head' }, el('h2', { text: `Upcoming deliveries (${d.deliveries.length})` }), el('a', { href: '#/r/deliveries', class: 'small', text: 'Open tracker' })),
+    d.deliveries.length ? table(['Expected', 'PO', 'Item', 'Submittal', 'MIR'], d.deliveries.map((x) => ({
+      href: `#/r/deliveries/${x.id}`,
+      cells: [el('span', {}, fmtDate(x.expected), ' ', x.days < 0 ? badge(`${-x.days} d late`, 'bad') : null), x.po || '', x.item,
+        x.submittalApproved === 'yes' ? badge('Approved', 'ok') : badge('Not approved', 'bad'),
+        x.mirDone === 'yes' ? badge('Done', 'ok') : badge('Pending', 'warn')],
+      clip: [2],
+    }))) : el('p', { class: 'muted', text: 'No deliveries expected in the next 3 weeks.' }));
+
+  const tone = (v) => S.tabs.sources.fields.status.tones[v] || 'muted';
+  const sources = el('div', { class: 'panel' },
+    el('div', { class: 'panel-head' }, el('h2', { text: 'Where info lives' }), el('a', { href: '#/r/sources', class: 'small', text: 'Edit' })),
+    table(['Register', 'Status', 'Where it lives today', 'Audit areas'], d.sources.map((s) => ({
+      href: `#/r/sources/${s.id}`,
+      cells: [s.register, badge(enumLabel(S.tabs.sources.fields.status, s.status), tone(s.status)), s.location || '', s.audit_areas || ''], clip: [2, 3],
+    }))));
+
+  v.replaceChildren(head, kpis,
+    el('div', { class: 'grid2' }, areaPanel, attention),
+    el('h2', { text: 'Registers' }), cards,
+    el('div', { class: 'grid2' }, overdue, soon),
+    el('div', { class: 'grid2' }, hold, ageing),
+    el('div', { class: 'grid2' }, deliveries, sources));
+}
+
+function table(headers, rows) {
+  return el('div', { class: 'table-wrap' }, el('table', {},
+    el('thead', {}, el('tr', {}, headers.map((h) => el('th', { text: h })))),
+    el('tbody', {}, rows.map((r) => {
+      const tr = el('tr', { class: r.href ? 'click' : '' }, r.cells.map((c, i) => {
+        const td = el('td', {}, c ?? '');
+        if (r.clip?.includes(i)) { td.className = 'clip'; if (typeof c === 'string') td.title = c; }
+        return td;
+      }));
+      if (r.href) tr.addEventListener('click', () => { location.hash = r.href; });
+      return tr;
+    }))));
+}
+
+/* ---------- upload & import ---------- */
+
+async function checklistOptions() {
+  try { return (await api('checklist')).items; } catch { return []; }
+}
+
+async function showUpload(uploadId, params) {
+  const v = show('#view-upload');
+  const preTab = params.get('tab') || 'auto';
+  const file = el('input', { type: 'file', accept: '.xlsx,.xlsm,.csv,.docx,.pdf', hidden: true });
+  const fileName = el('span', { class: 'muted', text: 'Excel (.xlsx), CSV, Word (.docx) or PDF · up to 25 MB' });
+  const drop = el('div', { class: 'drop', tabIndex: 0, role: 'button' }, el('strong', { text: 'Drop a file here or click to choose' }), fileName, file);
+  const tabSel = el('select', { name: 'tab' },
+    el('option', { value: 'auto', text: 'Detect automatically' }),
+    el('optgroup', { label: 'Register' }, S.order.map((t) => el('option', { value: t, text: S.tabs[t].label }))),
+    el('option', { value: 'evidence', text: 'Evidence only (just store the file)' }));
+  tabSel.value = S.tabs[preTab] || preTab === 'evidence' ? preTab : 'auto';
+  const refSel = el('select', { name: 'checklist_ref' }, el('option', { value: '', text: '— none —' }));
+  checklistOptions().then((items) => refSel.append(...items.map((i) => el('option', { value: i.ref, text: `${i.ref} – ${String(i.item).slice(0, 70)}` }))));
+  const go = el('button', { type: 'submit', class: 'primary', text: 'Upload and read', disabled: true });
+  const msg = el('p', { class: 'error' });
+  const result = el('div', { class: 'result' });
+
+  let chosen = null;
+  const pick = (f) => { chosen = f; fileName.textContent = f ? `${f.name} (${Math.round(f.size / 1024)} KB)` : ''; go.disabled = !f; };
+  drop.addEventListener('click', () => file.click());
+  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); file.click(); } });
+  file.addEventListener('change', () => pick(file.files[0]));
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); });
+
+  const form = el('form', { class: 'upload-form card' }, drop,
+    el('div', { class: 'form-row' },
+      el('label', {}, 'What is this document?', tabSel),
+      el('label', {}, 'Evidence for audit item (optional)', refSel)),
+    el('div', { class: 'actions' }, go), msg);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!chosen) return;
+    go.disabled = true; go.textContent = 'Reading…'; msg.textContent = '';
+    try {
+      const q = new URLSearchParams({ filename: chosen.name, tab: tabSel.value });
+      if (refSel.value) q.set('checklist_ref', refSel.value);
+      const r = await api(`uploads?${q}`, { method: 'POST', raw: chosen });
+      S.uploads = null;
+      history.replaceState(null, '', `#/upload/${r.upload.id}`);
+      renderResult(result, r.upload, r.analysis, r.previous);
+    } catch (err) { msg.textContent = err.message; }
+    go.textContent = 'Upload and read'; go.disabled = !chosen;
+  });
+
+  v.replaceChildren(el('div', { class: 'page-head' }, el('div', {},
+    el('h1', { text: 'Upload document' }),
+    el('p', { class: 'muted', text: 'The file is read and shown as a preview first. Nothing changes in the registers until you click Import.' }))), form, result);
+
+  if (uploadId) {
+    try {
+      const up = await api(`uploads/${uploadId}`);
+      if (up.tab === null && up.status === 'stored') return renderResult(result, up, null, null);
+      const a = await api(`uploads/${uploadId}/analyse`, { method: 'POST', body: { tab: up.tab || 'auto' } });
+      renderResult(result, up, a, null);
+    } catch (err) { result.replaceChildren(el('p', { class: 'note tone-bad', text: err.message })); }
   }
-  $('#view-title').textContent = def.label;
-  $('#new-btn').textContent = `New ${def.singular.toLowerCase()}`;
-  $('#search').value = '';
-  const statusDef = def.fields.status;
-  const filter = $('#status-filter');
-  filter.hidden = !statusDef;
-  filter.replaceChildren(el('option', { value: '', textContent: 'All statuses' }),
-    ...(statusDef ? statusDef.values.map((v) => el('option', { value: v, textContent: human(v) })) : []));
-  load();
+}
+
+function renderResult(box, upload, a, previous) {
+  const parts = [];
+  parts.push(el('div', { class: 'note' }, el('strong', { text: upload.filename }), ` · uploaded ${fmtWhen(upload.created_at)}`,
+    ' · ', el('a', { href: `/api/uploads/${upload.id}/file`, text: 'download' }),
+    upload.checklist_ref ? ` · evidence for audit item ${upload.checklist_ref}` : ''));
+  if (previous) parts.push(el('p', { class: 'note tone-warn', text: `This exact file was already uploaded on ${fmtWhen(previous.created_at)} as "${previous.filename}". Importing again only applies differences.` }));
+
+  if (!a) {
+    parts.push(el('p', { class: 'note tone-ok', text: 'Stored as evidence.' }));
+    return box.replaceChildren(...parts);
+  }
+
+  // register / table / header controls → re-analyse
+  const tabSel = el('select', {}, S.order.map((t) => el('option', { value: t, text: S.tabs[t].label })));
+  if (a.tab) tabSel.value = a.tab;
+  const controls = el('div', { class: 'controls' }, el('label', {}, 'Read into register', tabSel));
+  let tableSel = null; let headerInput = null;
+  if (a.mode === 'table') {
+    if (a.tables.length > 1) {
+      tableSel = el('select', {}, a.tables.map((t) => el('option', { value: t.index, text: `${t.name} (${t.rows} rows)` })));
+      tableSel.value = a.table;
+      controls.append(el('label', {}, 'Sheet / table', tableSel));
+    }
+    headerInput = el('input', { type: 'number', min: 1, value: a.headerRow + 1 });
+    controls.append(el('label', {}, 'Header row', headerInput));
+  }
+  const reanalyse = async (extra = {}) => {
+    try {
+      const body = { tab: tabSel.value, ...extra };
+      if (extra.keepTable !== false && tableSel && !('table' in extra)) body.table = Number(tableSel.value);
+      const next = await api(`uploads/${upload.id}/analyse`, { method: 'POST', body });
+      renderResult(box, upload, next, previous);
+    } catch (err) { box.append(el('p', { class: 'note tone-bad', text: err.message })); }
+  };
+  tabSel.addEventListener('change', () => reanalyse({ keepTable: false }));
+  tableSel?.addEventListener('change', () => reanalyse({ table: Number(tableSel.value) }));
+  headerInput?.addEventListener('change', () => reanalyse({ table: a.table, headerRow: Number(headerInput.value) - 1 }));
+  if (a.mode === 'table' && (a.kind === 'pdf' || a.kind === 'docx')) {
+    controls.append(el('button', { type: 'button', text: 'Read as a single document instead', onclick: () => reanalyse({ mode: 'fields', keepTable: false }) }));
+  }
+  if (a.mode === 'fields' && a.tables.length) {
+    controls.append(el('button', { type: 'button', text: 'Read as a table instead', onclick: () => reanalyse({ keepTable: false }) }));
+  }
+
+  if (a.mode === 'error' || a.mode === 'none') {
+    parts.push(el('p', { class: 'note tone-warn', text: a.message }), controls);
+    if (a.excerpt) parts.push(el('details', {}, el('summary', { text: 'Text read from the document' }), el('pre', { class: 'excerpt', text: a.excerpt })));
+    return box.replaceChildren(...parts);
+  }
+
+  const tab = S.tabs[a.tab];
+  const detected = el('p', { class: 'note tone-ok' }, `Read as `, el('strong', { text: tab.label }),
+    a.mode === 'table' ? ` · ${a.tables[a.table]?.name || ''}, header on row ${a.headerRow + 1}` : ' · single document');
+  parts.push(detected, controls);
+
+  if (a.mode === 'fields') {
+    parts.push(fieldsForm(upload, a));
+    return box.replaceChildren(...parts);
+  }
+
+  // table mode: mapping + preview
+  const excluded = new Set(a.rows.filter((r) => r.warnings.includes('excluded by you')).map((r) => r.line));
+  const mapped = a.mapping.map((f, i) => ({ f, i })).filter((x) => x.f);
+  const fieldOptions = [el('option', { value: '', text: '— ignore —' }), ...Object.entries(tab.fields).map(([f, d]) => el('option', { value: f, text: d.label }))];
+  const mapRow = el('tr', { class: 'map-row' }, el('th', { text: 'Column in file' }), el('th', { text: '→ field' }),
+    a.headers.map((h, i) => {
+      const s = el('select', { title: h }, fieldOptions.map((o) => o.cloneNode(true)));
+      s.value = a.mapping[i] || '';
+      s.addEventListener('change', () => {
+        const mapping = [...a.mapping]; mapping[i] = s.value || null;
+        reanalyse({ table: a.table, headerRow: a.headerRow, mapping, exclude: [...excluded] });
+      });
+      return el('th', {}, el('div', { class: 'src-head', text: h || `(column ${i + 1})` }), s);
+    }), el('th'));
+
+  const counts = el('div', { class: 'chips' });
+  const importBtn = el('button', { type: 'button', class: 'primary' });
+  const refresh = () => {
+    const c = { create: 0, update: 0, unchanged: 0, skip: 0 };
+    for (const r of a.rows) {
+      const act = excluded.has(r.line) && r.action !== 'skip' ? 'skip' : r.action === 'skip' && r.warnings.includes('excluded by you') && !excluded.has(r.line) ? r.prevAction : r.action;
+      c[act || 'skip']++;
+    }
+    if (a.total > a.rows.length) c.note = `(preview shows the first ${a.rows.length} of ${a.total} rows; counts are for the preview)`;
+    counts.replaceChildren(badge(`${c.create} new`, c.create ? 'ok' : 'muted'), badge(`${c.update} updates`, c.update ? 'warn' : 'muted'),
+      badge(`${c.unchanged} unchanged`, 'muted'), badge(`${c.skip} skipped`, c.skip ? 'bad' : 'muted'));
+    if (c.note) counts.append(el('span', { class: 'muted small', text: c.note }));
+    importBtn.textContent = `Import ${c.create} new + ${c.update} updates`;
+    importBtn.disabled = !(c.create + c.update);
+  };
+
+  const actionBadge = (r) => {
+    if (r.action === 'create') return badge('New', 'ok');
+    if (r.action === 'update') return badge('Update', 'warn');
+    if (r.action === 'unchanged') return badge('Unchanged', 'muted');
+    return badge('Skip', 'bad');
+  };
+  const body = el('tbody', {}, a.rows.map((r) => {
+    if (r.warnings.includes('excluded by you')) { r.prevAction = r.changes && Object.keys(r.changes).length ? 'update' : r.id ? 'unchanged' : 'create'; }
+    const canToggle = !(r.action === 'skip' && !r.warnings.includes('excluded by you'));
+    const box2 = el('input', { type: 'checkbox', checked: !excluded.has(r.line) && r.action !== 'skip', disabled: !canToggle, title: 'Include this row' });
+    const tr = el('tr', { class: r.action === 'skip' ? 'skipped' : '' },
+      el('td', {}, box2, ' ', el('span', { class: 'muted small', text: `#${r.line}` })),
+      el('td', {}, actionBadge(r)),
+      a.mapping.map((f) => {
+        if (!f) return el('td', { class: 'muted' });
+        const td = el('td', {}, valueNode(a.tab, f, r.values[f], r.values));
+        if (r.changes?.[f]) { td.className = 'changed'; td.prepend(el('span', { class: 'from', text: textOf(a.tab, f, r.changes[f].from) })); }
+        return td;
+      }),
+      el('td', { class: 'warn-list', text: r.warnings.filter((w) => w !== 'excluded by you').join(' · ') }));
+    box2.addEventListener('change', () => {
+      if (box2.checked) excluded.delete(r.line); else excluded.add(r.line);
+      tr.classList.toggle('skipped', !box2.checked);
+      refresh();
+    });
+    return tr;
+  }));
+  const wrap = el('div', { class: 'table-wrap' }, el('table', {},
+    el('thead', {}, mapRow, el('tr', {}, el('th', { text: 'Row' }), el('th', { text: 'Action' }),
+      a.mapping.map((f) => el('th', { text: f ? tab.fields[f].label : '' })), el('th', { text: 'Notes' }))),
+    body));
+
+  const unmapped = Object.entries(tab.fields).filter(([f, d]) => d.required && !a.mapping.includes(f)).map(([, d]) => d.label);
+  if (unmapped.length) parts.push(el('p', { class: 'note tone-bad', text: `Required field not matched to a column: ${unmapped.join(', ')}. Pick it in the column selectors below.` }));
+  const done = el('div');
+  importBtn.addEventListener('click', async () => {
+    importBtn.disabled = true; importBtn.textContent = 'Importing…';
+    try {
+      const res = await api(`uploads/${upload.id}/import`, { method: 'POST', body: { tab: a.tab, table: a.table, headerRow: a.headerRow, mapping: a.mapping, exclude: [...excluded] } });
+      showImported(box, res);
+    } catch (err) { done.replaceChildren(el('p', { class: 'note tone-bad', text: err.message })); refresh(); }
+  });
+  refresh();
+  parts.push(el('div', { class: 'controls' }, counts, el('span', { class: 'spacer' }), importBtn), done,
+    el('p', { class: 'muted small', text: 'Pick a field for each column, untick rows you don\'t want, then import. Changed values show the old value crossed out. Empty cells never clear existing data.' }),
+    wrap);
+  box.replaceChildren(...parts);
+}
+
+function fieldsForm(upload, a) {
+  const tab = S.tabs[a.tab];
+  const row = a.rows[0];
+  const form = el('form', { class: 'card' });
+  const fields = buildFields(tab, row.values, a.found);
+  const err = el('p', { class: 'error' });
+  const what = row.action === 'update' ? `Matches existing ${tab.singular.toLowerCase()} — saving updates it.`
+    : row.action === 'unchanged' ? `Matches an existing ${tab.singular.toLowerCase()} with the same values.`
+      : `Will create a new ${tab.singular.toLowerCase()}.`;
+  form.append(el('p', { class: 'muted', text: `Check the values read from the document (green hints show where each came from), fill any gaps, then save. ${what}` }),
+    fields, err, el('div', { class: 'actions' }, el('button', { type: 'submit', class: 'primary', text: 'Save to register' })));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const record = readFields(tab, form);
+    try {
+      const res = await api(`uploads/${upload.id}/import`, { method: 'POST', body: { tab: a.tab, mode: 'fields', record } });
+      showImported(form.parentElement, res);
+    } catch (e2) { err.textContent = e2.message; }
+  });
+  return form;
+}
+
+function showImported(box, res) {
+  const tab = S.tabs[res.tab];
+  box.replaceChildren(el('div', { class: 'note tone-ok' },
+    el('strong', { text: `Imported into ${tab.label}: ` }),
+    `${res.created} created, ${res.updated} updated, ${res.unchanged} unchanged, ${res.skipped} skipped.`),
+  el('div', { class: 'actions' },
+    el('a', { class: 'button primary', href: `#/r/${res.tab}`, text: `Open ${tab.label}` }),
+    el('a', { class: 'button', href: '#/', text: 'Dashboard' }),
+    el('button', { type: 'button', text: 'Upload another', onclick: () => { location.hash = '#/upload'; showUpload(null, new URLSearchParams()); } })));
+}
+
+/* ---------- uploaded files ---------- */
+
+async function showFiles() {
+  const v = show('#view-files');
+  v.replaceChildren(el('p', { class: 'muted', text: 'Loading…' }));
+  const { items } = await api('uploads');
+  const statusBadge = (u) => {
+    if (u.status === 'imported') return badge(`Imported${u.summary ? ` · ${u.summary.created} new, ${u.summary.updated} upd.` : ''}`, 'ok');
+    if (u.status === 'analysed') return badge('Read, not imported', 'warn');
+    if (u.status === 'failed') return badge('Could not read', 'bad');
+    return badge('Stored', 'muted');
+  };
+  const rows = items.map((u) => el('tr', {},
+    el('td', { text: fmtWhen(u.created_at) }),
+    el('td', { class: 'clip', title: u.filename }, el('a', { href: `/api/uploads/${u.id}/file`, text: u.filename })),
+    el('td', { text: u.tab ? S.tabs[u.tab]?.label || u.tab : '—' }),
+    el('td', {}, statusBadge(u), u.status === 'failed' && u.summary?.error ? el('div', { class: 'muted small', text: u.summary.error }) : null),
+    el('td', { text: u.checklist_ref || '' }),
+    el('td', { text: u.uploaded_by }),
+    el('td', {},
+      el('a', { href: `#/upload/${u.id}`, text: u.status === 'imported' ? 'Re-import' : 'Review & import' }),
+      S.user.role === 'admin' ? el('button', {
+        type: 'button', class: 'link', text: ' · Delete',
+        onclick: async () => { if (confirm(`Delete ${u.filename}? Records already imported stay.`)) { await api(`uploads/${u.id}`, { method: 'DELETE' }); showFiles(); } },
+      }) : null)));
+  v.replaceChildren(
+    el('div', { class: 'page-head' }, el('div', {}, el('h1', { text: 'Uploaded files' }), el('p', { class: 'muted', text: `${items.length} file(s). Files are kept on this server, not in Git.` })),
+      el('div', { class: 'actions' }, el('a', { class: 'button primary', href: '#/upload', text: 'Upload document' }))),
+    items.length ? el('div', { class: 'table-wrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, ['Uploaded', 'File', 'Register', 'Status', 'Audit item', 'By', ''].map((h) => el('th', { text: h })))),
+      el('tbody', {}, rows))) : el('p', { class: 'empty', text: 'No files uploaded yet.' }));
+}
+
+/* ---------- registers ---------- */
+
+let loadSeq = 0;
+async function showRegister(name, openId) {
+  show('#view-register');
+  const changed = S.current !== name;
+  S.current = name;
+  const t = S.tabs[name];
+  $('#reg-title').textContent = t.label;
+  $('#new-btn').textContent = `New ${t.singular.toLowerCase()}`;
+  $('#reg-import').href = `#/upload?tab=${name}`;
+  $('#reg-export').href = `/api/${name}/export.xlsx`;
+  $('#reg-template').href = `/api/${name}/template.xlsx`;
+  if (changed) {
+    $('#search').value = '';
+    const sf = statusField(name);
+    const filter = $('#status-filter');
+    filter.hidden = !sf;
+    filter.replaceChildren(el('option', { value: '', text: 'All statuses' }),
+      ...(sf ? t.fields[sf].values.map((v) => el('option', { value: v, text: enumLabel(t.fields[sf], v) })) : []));
+  }
+  await loadRegister();
+  if (openId) {
+    const row = S.rows.find((r) => r.id === openId);
+    if (row) openEditor(row);
+  }
 }
 
 let searchTimer;
-$('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(load, 250); });
-$('#status-filter').addEventListener('change', load);
+$('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadRegister, 250); });
+$('#status-filter').addEventListener('change', loadRegister);
 $('#new-btn').addEventListener('click', () => openEditor(null));
 
-/* ---------- table ---------- */
-
-async function refOptions(resource) {
-  if (!state.refCache[resource]) state.refCache[resource] = (await api(resource)).items;
-  return state.refCache[resource];
-}
-
-function refLabel(def, id) {
-  const row = (state.refCache[def.ref] || []).find((r) => r.id === id);
-  return row ? row[def.display] : `#${id}`;
-}
-
-async function load() {
-  const name = state.current;
-  const def = state.schema[name];
+async function loadRegister() {
+  const name = S.current; const seq = ++loadSeq;
+  const t = S.tabs[name];
   const params = new URLSearchParams();
   if ($('#search').value.trim()) params.set('q', $('#search').value.trim());
-  if ($('#status-filter').value) params.set('status', $('#status-filter').value);
-  for (const f of Object.values(def.fields)) if (f.type === 'ref') await refOptions(f.ref);
+  const sf = statusField(name);
+  if (sf && $('#status-filter').value) params.set(sf, $('#status-filter').value);
   const { items } = await api(`${name}?${params}`);
-  if (state.current !== name) return;
-  state.rows = items;
-  render();
-}
-
-function cell(def, field, value, row) {
-  const f = def.fields[field];
-  const td = el('td');
-  if (value == null || value === '') return td;
-  if (f.type === 'enum') {
-    const cls = GOOD.has(value) ? 'good' : BAD.has(value) ? 'bad' : WARN.has(value) ? 'warn' : '';
-    td.append(el('span', { className: `badge ${cls}`, textContent: human(value) }));
-  } else if (f.type === 'ref') {
-    td.textContent = refLabel(f, value);
-  } else if (f.type === 'url') {
-    const a = el('a', { href: value, textContent: 'open', target: '_blank', rel: 'noopener noreferrer' });
-    a.addEventListener('click', (e) => e.stopPropagation());
-    td.append(a);
-  } else {
-    td.textContent = value;
-    if (f.type === 'date' && value < today() && !DONE.has(row.status)) td.className = 'overdue';
-  }
-  return td;
-}
-
-function render() {
-  const def = state.schema[state.current];
-  $('#grid thead').replaceChildren(el('tr', {}, ...def.list.map((f) => el('th', { textContent: def.fields[f].label }))));
-  $('#grid tbody').replaceChildren(...state.rows.map((row) => {
-    const tr = el('tr', {}, ...def.list.map((f) => cell(def, f, row[f], row)));
+  if (seq !== loadSeq) return;
+  S.rows = items;
+  const cols = t.list;
+  $('#grid thead').replaceChildren(el('tr', {}, cols.map((f) => el('th', { text: (t.fields[f] || t.computed?.[f])?.label || f })), el('th', { text: 'Source' })));
+  $('#grid tbody').replaceChildren(...items.map((row) => {
+    const tr = el('tr', { class: 'click' }, cols.map((f) => cellFor(name, f, row)),
+      el('td', {}, row.source_upload_id ? el('a', { href: `/api/uploads/${row.source_upload_id}/file`, text: 'file', onclick: (e) => e.stopPropagation() }) : ''));
     tr.addEventListener('click', () => openEditor(row));
     return tr;
   }));
-  $('#empty').hidden = state.rows.length > 0;
-  const statusDef = def.fields.status;
-  if (statusDef) {
-    const counts = {};
-    for (const r of state.rows) counts[r.status] = (counts[r.status] || 0) + 1;
-    const overdue = state.rows.filter((r) => Object.entries(def.fields)
-      .some(([k, f]) => f.type === 'date' && r[k] && r[k] < today() && !DONE.has(r.status))).length;
-    $('#summary').textContent = `${state.rows.length} shown · ` +
-      Object.entries(counts).map(([k, n]) => `${human(k)}: ${n}`).join(' · ') +
-      (overdue ? ` · overdue: ${overdue}` : '');
-  } else {
-    $('#summary').textContent = `${state.rows.length} shown`;
+  const empty = $('#empty');
+  empty.hidden = items.length > 0;
+  empty.replaceChildren(params.toString() ? 'No matching records.' : el('span', {}, 'No records yet. ',
+    el('a', { href: `#/upload?tab=${name}`, text: 'Import a file' }), ' or click New.'));
+  const parts = [`${items.length} record${items.length === 1 ? '' : 's'}`];
+  if (sf) {
+    const c = {};
+    for (const r of items) if (r[sf]) c[r[sf]] = (c[r[sf]] || 0) + 1;
+    parts.push(...Object.entries(c).map(([k, n]) => `${enumLabel(t.fields[sf], k)}: ${n}`));
   }
+  if (t.due) {
+    const over = items.filter((r) => r[t.due] && daysFrom(r[t.due]) < 0 && !t.done.includes(r[sf])).length;
+    if (over) parts.push(`overdue: ${over}`);
+  }
+  $('#reg-summary').textContent = parts.join(' · ');
 }
 
 /* ---------- editor ---------- */
 
-async function openEditor(row) {
-  const name = state.current;
-  const def = state.schema[name];
-  state.editing = row;
-  $('#edit-title').textContent = row ? `Edit ${def.singular.toLowerCase()}` : `New ${def.singular.toLowerCase()}`;
-  $('#edit-error').textContent = '';
-  const fields = [];
-  for (const [key, f] of Object.entries(def.fields)) {
-    const value = row ? row[key] : f.default;
+function buildFields(tab, values = {}, found = {}) {
+  const wrap = el('div', { class: 'fields' });
+  for (const [key, f] of Object.entries(tab.fields)) {
+    const value = values[key] ?? (Object.keys(values).length ? null : f.default) ?? '';
     let input;
     if (f.type === 'enum') {
-      input = el('select', {}, ...(f.required ? [] : [el('option', { value: '', textContent: '—' })]),
-        ...f.values.map((v) => el('option', { value: v, textContent: human(v) })));
-    } else if (f.type === 'ref') {
-      const opts = await refOptions(f.ref);
-      input = el('select', {}, el('option', { value: '', textContent: '—' }),
-        ...opts.map((o) => el('option', { value: String(o.id), textContent: o[f.display] })));
-    } else if (f.type === 'text') {
-      input = el('textarea');
-    } else {
-      input = el('input', { type: f.type === 'date' ? 'date' : f.type === 'url' ? 'url' : 'text' });
-      if (f.max) input.maxLength = f.max;
-    }
+      input = el('select', {}, f.required ? null : el('option', { value: '', text: '—' }), f.values.map((v) => el('option', { value: v, text: enumLabel(f, v) })));
+    } else if (f.type === 'bool') {
+      input = el('select', {}, el('option', { value: '', text: '—' }), el('option', { value: 'yes', text: 'Yes' }), el('option', { value: 'no', text: 'No' }));
+    } else if (f.type === 'text') input = el('textarea');
+    else input = el('input', { type: f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text', step: f.type === 'number' ? 'any' : undefined, maxLength: f.max || undefined });
     input.name = key;
     input.required = !!f.required;
     input.value = value == null ? '' : String(value);
     if (input.tagName === 'SELECT' && input.selectedIndex < 0) input.selectedIndex = 0;
-    fields.push(el('label', { className: f.type === 'text' || key === 'title' ? 'wide' : '' }, f.label + (f.required ? ' *' : ''), input));
+    wrap.append(el('label', { class: f.type === 'text' ? 'wide' : '' }, f.label + (f.required ? ' *' : ''), input,
+      found[key] ? el('span', { class: 'hint', text: `from "${found[key]}"` }) : null));
   }
-  $('#edit-fields').replaceChildren(...fields);
-  $('#delete-btn').hidden = !(row && state.user.role === 'admin');
+  return wrap;
+}
 
-  const history = $('#history');
-  history.hidden = !row;
-  history.open = false;
+function readFields(tab, form) {
+  const out = {};
+  for (const key of Object.keys(tab.fields)) {
+    const v = form.elements[key].value;
+    out[key] = v === '' ? null : v;
+  }
+  return out;
+}
+
+async function openEditor(row) {
+  const name = S.current; const t = S.tabs[name];
+  S.editing = row;
+  $('#edit-title').textContent = row ? `${t.singular}: ${titleOf(name, row)}` : `New ${t.singular.toLowerCase()}`;
+  $('#edit-error').textContent = '';
+  $('#edit-fields').replaceWith(Object.assign(buildFields(t, row || {}), { id: 'edit-fields' }));
+  $('#delete-btn').hidden = !(row && S.user.role === 'admin');
+  $('#edit-source').replaceChildren(row?.source_upload_id ? el('span', {}, 'Last imported from ', el('a', { href: `/api/uploads/${row.source_upload_id}/file`, text: 'this file' })) : '');
+  const hist = $('#history'); hist.hidden = !row; hist.open = false;
   $('#history-list').replaceChildren();
   if (row) {
     api(`activity?resource=${name}&record_id=${row.id}`).then(({ items }) => {
-      $('#history-list').replaceChildren(...items.map((a) => {
-        const what = a.action === 'update' && a.changes
-          ? Object.entries(a.changes).map(([k, c]) => `${k}: ${c.from ?? '—'} → ${c.to ?? '—'}`).join(', ')
-          : a.action;
-        return el('li', { textContent: `${a.at.slice(0, 16).replace('T', ' ')} · ${a.username} · ${what}` });
+      $('#history-list').replaceChildren(...items.map((x) => {
+        const what = (x.action === 'update' || x.action === 'import') && x.changes
+          ? `${x.action === 'import' ? 'import: ' : ''}${Object.entries(x.changes).map(([k, c]) => `${t.fields[k]?.label || k}: ${c.from ?? '—'} → ${c.to ?? '—'}`).join(', ')}`
+          : x.action;
+        return el('li', { text: `${fmtWhen(x.at)} · ${x.username} · ${what}` });
       }));
     }).catch(() => {});
   }
   $('#editor').showModal();
 }
 
-$('#cancel-btn').addEventListener('click', () => $('#editor').close());
+$('#cancel-btn').addEventListener('click', () => { $('#editor').close(); });
+$('#editor').addEventListener('close', () => { if (/^#\/r\/\w+\/\d+/.test(location.hash)) history.replaceState(null, '', `#/r/${S.current}`); });
 
 $('#edit-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = state.current;
-  const def = state.schema[name];
-  const body = {};
-  for (const [key, f] of Object.entries(def.fields)) {
-    const v = e.target.elements[key].value;
-    body[key] = v === '' ? null : f.type === 'ref' ? Number(v) : v;
-  }
+  const name = S.current; const t = S.tabs[name];
+  const body = readFields(t, e.target);
   try {
-    if (state.editing) {
-      body.version = state.editing.version;
-      await api(`${name}/${state.editing.id}`, { method: 'PATCH', body });
-    } else {
-      await api(name, { method: 'POST', body });
-    }
-    delete state.refCache[name];
+    if (S.editing) await api(`${name}/${S.editing.id}`, { method: 'PATCH', body: { ...body, version: S.editing.version } });
+    else await api(name, { method: 'POST', body });
     $('#editor').close();
-    load();
+    loadRegister();
   } catch (err) {
     $('#edit-error').textContent = err.status === 409
       ? 'Someone else changed this record while you were editing. Close and reopen it to see their changes.'
@@ -254,15 +694,14 @@ $('#edit-form').addEventListener('submit', async (e) => {
 });
 
 $('#delete-btn').addEventListener('click', async () => {
-  if (!state.editing || !confirm('Delete this record? This cannot be undone.')) return;
+  if (!S.editing || !confirm('Delete this record? This cannot be undone.')) return;
   try {
-    await api(`${state.current}/${state.editing.id}`, { method: 'DELETE' });
-    delete state.refCache[state.current];
+    await api(`${S.current}/${S.editing.id}`, { method: 'DELETE' });
     $('#editor').close();
-    load();
+    loadRegister();
   } catch (err) { $('#edit-error').textContent = err.message; }
 });
 
 /* ---------- boot ---------- */
 
-api('me').then(({ user }) => start(user)).catch(() => showLogin());
+api('me').then(() => start()).catch(() => showLogin());
