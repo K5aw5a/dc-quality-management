@@ -1,0 +1,16 @@
+{
+  "name": "dc-quality-management",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Data center quality management workspace: submittals & documentation, trackers, inspections/audits.",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "create-user": "node --disable-warning=ExperimentalWarning scripts/create-user.js"
+  },
+  "license": "UNLICENSED"
+}

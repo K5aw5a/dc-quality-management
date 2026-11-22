@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DC Quality Management</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <section id="login-view" class="login" hidden>
+    <form id="login-form" class="card">
+      <h1>DC Quality Management</h1>
+      <p class="muted">Sign in to continue</p>
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <p id="login-error" class="error" role="alert"></p>
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+  </section>
+
+  <div id="app-view" hidden>
+    <header class="topbar">
+      <strong class="brand">DC Quality</strong>
+      <nav id="tabs" class="tabs" aria-label="Modules"></nav>
+      <span class="spacer"></span>
+      <span id="whoami" class="muted"></span>
+      <button id="logout" type="button">Sign out</button>
+    </header>
+
+    <main>
+      <div class="toolbar">
+        <h2 id="view-title"></h2>
+        <span class="spacer"></span>
+        <input id="search" type="search" placeholder="Search…" aria-label="Search">
+        <select id="status-filter" aria-label="Filter by status"></select>
+        <button id="new-btn" type="button" class="primary">New</button>
+      </div>
+      <p id="summary" class="muted"></p>
+      <div class="table-wrap">
+        <table id="grid">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="empty" class="muted" hidden>No records yet.</p>
+    </main>
+  </div>
+
+  <dialog id="editor">
+    <form id="edit-form" method="dialog">
+      <h3 id="edit-title"></h3>
+      <div id="edit-fields" class="fields"></div>
+      <p id="edit-error" class="error" role="alert"></p>
+      <div class="actions">
+        <button type="button" id="delete-btn" class="danger" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" id="cancel-btn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+      <details id="history" hidden>
+        <summary>History</summary>
+        <ul id="history-list"></ul>
+      </details>
+    </form>
+  </dialog>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# /etc/systemd/system/dc-quality.service
+[Unit]
+Description=DC Quality Management
+After=network.target
+
+[Service]
+Type=simple
+User=dcquality
+WorkingDirectory=/opt/dc-quality
+EnvironmentFile=/etc/dc-quality.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning src/server.js
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/dc-quality
+
+[Install]
+WantedBy=multi-user.target
