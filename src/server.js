@@ -33,6 +33,16 @@ const server = createApp({
   trustProxy: process.env.TRUST_PROXY === '1',
 });
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use: the app (or something else) is probably already running.`);
+    console.error(`Open http://${HOST}:${PORT}, stop the other process, or start on another port with PORT=<number>.`);
+  } else {
+    console.error(`Server error: ${err.message}`);
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
   console.log(`DC Quality Management listening on http://${HOST}:${PORT} (db: ${DB_PATH})`);
 });
