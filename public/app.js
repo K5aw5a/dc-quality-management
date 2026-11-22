@@ -358,8 +358,9 @@ function renderResult(box, upload, a, previous) {
   }
 
   // register / table / header controls → re-analyse
-  const tabSel = el('select', {}, S.order.map((t) => el('option', { value: t, text: S.tabs[t].label })));
-  if (a.tab) tabSel.value = a.tab;
+  const tabSel = el('select', {}, a.tab ? null : el('option', { value: '', text: '— choose a register —', disabled: true }),
+    S.order.map((t) => el('option', { value: t, text: S.tabs[t].label })));
+  tabSel.value = a.tab || '';
   const controls = el('div', { class: 'controls' }, el('label', {}, 'Read into register', tabSel));
   let tableSel = null; let headerInput = null;
   if (a.mode === 'table') {
