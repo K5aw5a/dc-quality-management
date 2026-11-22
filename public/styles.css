@@ -209,3 +209,31 @@ dialog::backdrop { background: rgb(0 0 0 / .4); }
   .area-row .bar { grid-column: 1 / -1; grid-row: 2; }
   .fields { grid-template-columns: 1fr; }
 }
+
+/* readiness segments by status colour */
+.seg-tone-ok { background: var(--ok-bar); } .seg-tone-warn { background: var(--warn-bar); }
+.seg-tone-bad { background: var(--bad-bar); } .seg-tone-muted, .seg-tone-na { background: var(--none-bar); }
+.seg-tone-na { opacity: .5; }
+.reg-desc { margin: 2px 0 4px; max-width: 760px; }
+
+/* settings */
+fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
+h2.section { margin: 8px 0 0; }
+.col-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 10px; }
+.col-card.hidden-col { background: var(--sunken); }
+.col-head { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.col-head label, .col-card label.wide, .rules label, .card > label.wide, .card label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.col-head .grow { flex: 1 1 220px; }
+.col-flags, .col-move { display: flex; gap: 12px; align-items: center; padding-bottom: 6px; }
+label.check { display: inline-flex !important; gap: 4px; align-items: center; color: var(--text) !important; font-size: 13px; }
+label.inline { display: inline-flex !important; gap: 6px; align-items: center; }
+.checklist { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+.options table { width: 100%; }
+.options th { position: static; }
+.options td { padding: 4px 6px; }
+.options input[type=text] { width: 100%; }
+.rules { display: grid; gap: 14px; }
+.rule { display: grid; gap: 2px; }
+.danger-link { color: var(--bad) !important; }
+.card textarea, .card input[type=text], .card input:not([type]), .card select { width: 100%; }
+.reg-card[title]:hover { cursor: pointer; }

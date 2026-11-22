@@ -46,7 +46,7 @@ const fmtWhen = (ts) => (ts ? fmtDate(ts) + ' ' + String(ts).slice(11, 16) : '')
 const enumLabel = (def, v) => (v == null ? '' : def?.labels?.[v] || human(v));
 const toneOf = (def, v) => def?.tones?.[v] || 'muted';
 const badge = (text, tone = 'muted') => el('span', { class: `badge tone-${tone}`, text });
-const statusField = (tab) => Object.keys(S.tabs[tab].fields).find((f) => f.endsWith('status'));
+const statusField = (tab) => S.tabs[tab].statusField;
 const titleOf = (tab, row) => S.tabs[tab].display.map((f) => row[f]).filter((v) => v != null && v !== '').join(' – ');
 
 function daysFrom(iso) { return Math.round((Date.parse(iso) - Date.parse(today())) / 86400000); }
@@ -84,7 +84,7 @@ function cellFor(tab, field, row) {
     if (!done && d < 0) td.className = 'overdue';
     else if (!done && d <= (t.soonDays || 14)) td.className = 'soon';
   }
-  if (field === 'days_in_review' && v != null) td.className = v > 28 ? 'num overdue' : v > 14 ? 'num soon' : 'num';
+  if (field === 'age_days' && v != null) td.className = v > 28 ? 'num overdue' : v > 14 ? 'num soon' : 'num';
   return td;
 }
 
@@ -116,15 +116,20 @@ $('#logout').addEventListener('click', async () => {
 async function start() {
   const me = await api('me');
   S.user = me.user;
-  const schema = await api('schema');
-  S.tabs = schema.tabs; S.order = schema.order;
+  await reloadSchema();
   $('#project-name').textContent = me.project;
   document.title = `${me.project} – Quality Dashboard`;
   $('#whoami').textContent = `${S.user.username} (${S.user.role})`;
-  $('#nav-registers').replaceChildren(...S.order.map((t) => el('a', { href: `#/r/${t}`, text: S.tabs[t].label, 'data-route': `r/${t}` })));
   $('#login-view').hidden = true;
   $('#app-view').hidden = false;
   route();
+}
+
+// Registers and document types can be edited, so the schema is reloaded after changes.
+async function reloadSchema() {
+  const schema = await api('schema');
+  S.tabs = schema.tabs; S.order = schema.order; S.docTypes = schema.docTypes || [];
+  $('#nav-registers').replaceChildren(...S.order.map((t) => el('a', { href: `#/r/${t}`, text: S.tabs[t].label, 'data-route': `r/${t}` })));
 }
 
 window.addEventListener('hashchange', () => S.user && route());
@@ -140,6 +145,7 @@ function route() {
     showRegister(parts[1], parts[2] ? Number(parts[2]) : null);
   } else if (key === 'upload') showUpload(parts[1] ? Number(parts[1]) : null, params);
   else if (key === 'files') showFiles();
+  else if (key === 'settings') { key = `settings/${parts[1] === 'doctypes' ? 'doctypes' : 'registers'}`; showSettings(parts.slice(1), params); }
   else { key = 'dashboard'; showDashboard(); }
   for (const a of document.querySelectorAll('.nav a')) {
     if (a.dataset.route === key) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -157,7 +163,7 @@ async function showDashboard() {
   let d;
   try { d = await api('dashboard'); } catch (err) { v.replaceChildren(el('p', { class: 'error', text: err.message })); return; }
   const r = d.readiness;
-  const atGc14 = d.ageing.buckets.slice(2).reduce((s, b) => s + b.count, 0);
+  const atGc14 = d.ageing ? d.ageing.buckets.slice(2).reduce((s, b) => s + b.count, 0) : 0;
   const totalOverdue = d.cards.reduce((s, c) => s + c.overdue, 0);
   const totalHold = d.cards.reduce((s, c) => s + c.onHold, 0);
   const kpi = (label, value, sub, tone) => el('div', { class: `kpi tone-${tone}` },
@@ -169,38 +175,41 @@ async function showDashboard() {
       el('a', { class: 'button', href: '/api/export.xlsx', download: '', text: 'Export all registers (.xlsx)' }),
       el('a', { class: 'button primary', href: '#/upload', text: 'Upload document' })));
 
+  // status tiles: readiness %, then every status option that still needs work (not done / not N/A)
+  const pending = (r.options || []).filter((o) => !o.done && !o.na);
   const kpis = el('div', { class: 'kpis' },
-    kpi('Audit readiness', r.applicable ? `${r.pct}%` : '–', r.applicable ? `${r.counts.ready} of ${r.applicable} items ready` : 'Import your audit checklist',
-      !r.applicable ? 'muted' : r.pct >= 80 ? 'ok' : r.pct >= 50 ? 'warn' : 'bad'),
-    kpi('Missing', r.counts.missing, 'audit items', r.counts.missing ? 'bad' : 'ok'),
-    kpi('Partial', r.counts.partial, 'audit items', r.counts.partial ? 'warn' : 'ok'),
-    kpi('Not checked', r.counts.not_checked, 'audit items', 'muted'),
+    r.register ? kpi('Audit readiness', r.applicable ? `${r.pct}%` : '–', r.applicable ? `${r.ready} of ${r.applicable} items ready` : 'Import your audit checklist',
+      !r.applicable ? 'muted' : r.pct >= 80 ? 'ok' : r.pct >= 50 ? 'warn' : 'bad') : null,
+    pending.map((o) => kpi(o.label, r.total ? r.counts[o.value] || 0 : '–', 'audit items', !r.total ? 'muted' : (r.counts[o.value] || 0) ? o.tone : 'ok')),
     kpi('Overdue', totalOverdue, 'across registers', totalOverdue ? 'bad' : 'ok'),
     kpi('On hold / blocked', totalHold, 'across registers', totalHold ? 'warn' : 'ok'),
-    kpi('Submittals > 14 days at GC', atGc14, `${d.ageing.open} in review`, atGc14 ? 'warn' : 'ok'));
+    d.ageing ? kpi(`${d.ageing.label}: > 14 days in review`, atGc14, `${d.ageing.open} in review`, atGc14 ? 'warn' : 'ok') : null);
 
-  // readiness by area
-  const segs = ['ready', 'partial', 'missing', 'not_checked', 'n_a'];
-  const segLabel = { ready: 'Ready', partial: 'Partial', missing: 'Missing', not_checked: 'Not checked', n_a: 'N/A' };
-  const areaPanel = el('div', { class: 'panel' },
-    el('div', { class: 'panel-head' }, el('h2', { text: 'Audit readiness by area' }), el('a', { href: '#/r/checklist', class: 'small', text: 'Open checklist' })),
-    r.total ? el('div', { class: 'areas' }, r.areas.map((a) => {
-      const bar = el('div', { class: 'bar', title: segs.map((s) => `${segLabel[s]}: ${a[s] || 0}`).join(' · ') });
-      for (const s of segs) if (a[s]) { const sp = el('span', { class: `seg-${s}` }); sp.style.width = `${(a[s] / a.total) * 100}%`; bar.append(sp); }
-      return el('div', { class: 'area-row' }, el('span', { text: a.area }), bar, el('span', { class: 'pct', text: `${a.pct}%` }));
-    })) : el('p', { class: 'empty' }, 'No audit checklist yet. ', el('a', { href: '#/upload?tab=checklist', text: 'Upload the checklist workbook' })),
-    r.total ? el('div', { class: 'legend' }, segs.map((s) => el('span', {}, el('i', { class: `seg-${s}` }), segLabel[s]))) : null);
+  let readinessRow = null;
+  if (r.register) {
+    const opts = r.options;
+    const areaPanel = el('div', { class: 'panel' },
+      el('div', { class: 'panel-head' }, el('h2', { text: 'Audit readiness by area' }), el('a', { href: `#/r/${r.register}`, class: 'small', text: 'Open checklist' })),
+      r.total ? el('div', { class: 'areas' }, r.areas.map((a) => {
+        const bar = el('div', { class: 'bar', title: opts.map((o) => `${o.label}: ${a.counts[o.value] || 0}`).join(' · ') });
+        for (const o of opts) {
+          const n = a.counts[o.value] || 0;
+          if (n) { const sp = el('span', { class: `seg-tone-${o.na ? 'na' : o.tone}` }); sp.style.width = `${(n / a.total) * 100}%`; bar.append(sp); }
+        }
+        return el('div', { class: 'area-row' }, el('span', { text: a.area }), bar, el('span', { class: 'pct', text: `${a.pct}%` }));
+      })) : el('p', { class: 'empty' }, 'No audit checklist yet. ', el('a', { href: `#/upload?tab=${r.register}`, text: 'Upload the checklist workbook' })),
+      r.total ? el('div', { class: 'legend' }, opts.map((o) => el('span', {}, el('i', { class: `seg-tone-${o.na ? 'na' : o.tone}` }), o.label))) : null);
+    const attention = el('div', { class: 'panel' },
+      el('div', { class: 'panel-head' }, el('h2', { text: `Audit items needing action (${r.attention.length})` })),
+      r.attention.length ? table(['Ref', 'Item', 'Status', 'Gap / action needed', 'Owner'], r.attention.slice(0, 40).map((a) => ({
+        href: `#/r/${r.register}/${a.id}`,
+        cells: [a.ref, a.title.replace(`${a.ref} – `, ''), badge(a.statusLabel, a.tone), a.gap || '—', a.owner || ''],
+        clip: [1, 3],
+      }))) : el('p', { class: 'muted', text: r.total ? 'Nothing needs action.' : 'Appears once the checklist is imported.' }));
+    readinessRow = el('div', { class: 'grid2' }, areaPanel, attention);
+  }
 
-  const attention = el('div', { class: 'panel' },
-    el('div', { class: 'panel-head' }, el('h2', { text: `Missing & partial audit items (${r.attention.length})` })),
-    r.attention.length ? table(['Ref', 'Item', 'Status', 'Gap / action needed', 'Owner'], r.attention.slice(0, 40).map((a) => ({
-      href: `#/r/checklist/${a.id}`,
-      cells: [a.ref, a.item, badge(a.status === 'missing' ? 'Missing' : 'Partial', a.status === 'missing' ? 'bad' : 'warn'), a.gap || '—', a.owner || ''],
-      clip: [1, 3],
-    }))) : el('p', { class: 'muted', text: r.total ? 'Nothing missing or partial.' : 'Appears once the checklist is imported.' }));
-
-  // register cards
-  const cards = el('div', { class: 'cards' }, d.cards.map((c) => el('a', { class: `reg-card tone-${c.tone}`, href: `#/r/${c.tab}` },
+  const cards = el('div', { class: 'cards' }, d.cards.map((c) => el('a', { class: `reg-card tone-${c.tone}`, href: `#/r/${c.tab}`, title: c.description || '' },
     el('h3', { text: c.label }),
     el('span', { class: 'count', text: c.total }), el('span', { class: 'muted small', text: c.total === 1 ? ' record' : ' records' }),
     el('div', { class: 'chips' },
@@ -211,58 +220,64 @@ async function showDashboard() {
       c.total && !c.overdue && !c.dueSoon && !c.onHold ? badge('OK', 'ok') : null),
     el('p', { class: 'muted small', text: c.lastUpload ? `Last upload ${fmtDate(c.lastUpload)}` : c.updated ? `Updated ${fmtDate(c.updated)}` : 'No data yet' }))));
 
-  const itemRows = (list, dateLabel) => list.map((o) => ({
+  const itemRows = (list) => list.map((o) => ({
     href: `#/r/${o.tab}/${o.id}`,
-    cells: [o.tabLabel, o.title, `${fmtDate(o.date)}`, badge(o.days < 0 ? `${-o.days} d late` : o.days === 0 ? 'today' : `in ${o.days} d`, o.days < 0 ? 'bad' : 'warn'), o.owner || ''],
+    cells: [o.tabLabel, o.title, fmtDate(o.date), badge(o.days < 0 ? `${-o.days} d late` : o.days === 0 ? 'today' : `in ${o.days} d`, o.days < 0 ? 'bad' : 'warn'), o.owner || ''],
     clip: [1],
   }));
   const overdue = el('div', { class: 'panel' }, el('h2', { text: `Overdue (${d.overdue.length})` }),
     d.overdue.length ? table(['Register', 'Item', 'Date', '', 'Owner'], itemRows(d.overdue)) : el('p', { class: 'muted', text: 'Nothing overdue.' }));
   const soon = el('div', { class: 'panel' }, el('h2', { text: `Due soon (${d.dueSoon.length})` }),
-    d.dueSoon.length ? table(['Register', 'Item', 'Date', '', 'Owner'], itemRows(d.dueSoon)) : el('p', { class: 'muted', text: 'Nothing due in the next 2 weeks (30 days for calibration and expiry).' }));
+    d.dueSoon.length ? table(['Register', 'Item', 'Date', '', 'Owner'], itemRows(d.dueSoon)) : el('p', { class: 'muted', text: 'Nothing due soon.' }));
   const hold = el('div', { class: 'panel' }, el('h2', { text: `On hold & why (${d.onHold.length})` }),
     d.onHold.length ? table(['Register', 'Item', 'Status', 'Reason'], d.onHold.map((o) => ({
       href: `#/r/${o.tab}/${o.id}`,
-      cells: [o.tabLabel, o.title, badge(human(o.status), 'bad'), o.reason || '— no reason recorded —'], clip: [1, 3],
+      cells: [o.tabLabel, o.title, badge(o.statusLabel || human(o.status), 'bad'), o.reason || '— no reason recorded —'], clip: [1, 3],
     }))) : el('p', { class: 'muted', text: 'Nothing on hold.' }));
 
-  const maxB = Math.max(1, ...d.ageing.buckets.map((b) => b.count));
-  const bucketTone = ['ok', 'warn', 'bad', 'bad'];
-  const ageing = el('div', { class: 'panel' },
-    el('div', { class: 'panel-head' }, el('h2', { text: `Submittals waiting at the GC (${d.ageing.open})` }), el('a', { href: '#/r/submittals', class: 'small', text: 'Open register' })),
-    el('div', { class: 'hbars' }, d.ageing.buckets.map((b, i) => {
-      const fill = el('div', { class: 'fill' }); fill.style.width = `${(b.count / maxB) * 100}%`;
-      fill.style.background = `var(--${bucketTone[i]}-bar)`;
-      return el('div', { class: 'hbar' }, el('span', { text: b.label }), el('div', { class: 'track' }, fill), el('span', { class: 'num', text: b.count }));
-    })),
-    d.ageing.oldest.length ? table(['Ref', 'Title', 'Days', 'Blocker'], d.ageing.oldest.map((s) => ({
-      href: `#/r/submittals/${s.id}`, cells: [s.ref, s.title, badge(`${s.days} d`, s.days > 28 ? 'bad' : s.days > 14 ? 'warn' : 'ok'), s.blocker || ''], clip: [1, 3],
-    }))) : el('p', { class: 'muted', text: 'No submittals in review.' }));
+  let ageing = null;
+  if (d.ageing) {
+    const maxB = Math.max(1, ...d.ageing.buckets.map((b) => b.count));
+    const bucketTone = ['ok', 'warn', 'bad', 'bad'];
+    ageing = el('div', { class: 'panel' },
+      el('div', { class: 'panel-head' }, el('h2', { text: `${d.ageing.label}: waiting for review (${d.ageing.open})` }), el('a', { href: `#/r/${d.ageing.register}`, class: 'small', text: 'Open register' })),
+      el('div', { class: 'hbars' }, d.ageing.buckets.map((b, i) => {
+        const fill = el('div', { class: 'fill' }); fill.style.width = `${(b.count / maxB) * 100}%`;
+        fill.style.background = `var(--${bucketTone[i]}-bar)`;
+        return el('div', { class: 'hbar' }, el('span', { text: b.label }), el('div', { class: 'track' }, fill), el('span', { class: 'num', text: b.count }));
+      })),
+      d.ageing.oldest.length ? table(['Ref', 'Title', 'Days', 'Blocker'], d.ageing.oldest.map((s) => ({
+        href: `#/r/${d.ageing.register}/${s.id}`, cells: [s.ref, s.title, badge(`${s.days} d`, s.days > 28 ? 'bad' : s.days > 14 ? 'warn' : 'ok'), s.blocker || ''], clip: [1, 3],
+      }))) : el('p', { class: 'muted', text: 'Nothing in review.' }));
+  }
 
-  const deliveries = el('div', { class: 'panel' },
-    el('div', { class: 'panel-head' }, el('h2', { text: `Upcoming deliveries (${d.deliveries.length})` }), el('a', { href: '#/r/deliveries', class: 'small', text: 'Open tracker' })),
-    d.deliveries.length ? table(['Expected', 'PO', 'Item', 'Submittal', 'MIR'], d.deliveries.map((x) => ({
-      href: `#/r/deliveries/${x.id}`,
-      cells: [el('span', {}, fmtDate(x.expected), ' ', x.days < 0 ? badge(`${-x.days} d late`, 'bad') : null), x.po || '', x.item,
-        x.submittalApproved === 'yes' ? badge('Approved', 'ok') : badge('Not approved', 'bad'),
-        x.mirDone === 'yes' ? badge('Done', 'ok') : badge('Pending', 'warn')],
-      clip: [2],
-    }))) : el('p', { class: 'muted', text: 'No deliveries expected in the next 3 weeks.' }));
+  let deliveries = null;
+  if (d.deliveriesRegister) {
+    deliveries = el('div', { class: 'panel' },
+      el('div', { class: 'panel-head' }, el('h2', { text: `Upcoming deliveries (${d.deliveries.length})` }), el('a', { href: `#/r/${d.deliveriesRegister}`, class: 'small', text: 'Open tracker' })),
+      d.deliveries.length ? table(['Expected', 'PO', 'Item', 'Submittal', 'MIR'], d.deliveries.map((x) => ({
+        href: `#/r/${d.deliveriesRegister}/${x.id}`,
+        cells: [el('span', {}, fmtDate(x.expected), ' ', x.days < 0 ? badge(`${-x.days} d late`, 'bad') : null), x.po || '', x.item,
+          x.submittalApproved === 'yes' ? badge('Approved', 'ok') : x.submittalApproved === 'no' ? badge('Not approved', 'bad') : '',
+          x.mirDone === 'yes' ? badge('Done', 'ok') : x.mirDone === 'no' ? badge('Pending', 'warn') : ''],
+        clip: [2],
+      }))) : el('p', { class: 'muted', text: 'No deliveries expected in the next 3 weeks.' }));
+  }
 
-  const tone = (v) => S.tabs.sources.fields.status.tones[v] || 'muted';
-  const sources = el('div', { class: 'panel' },
-    el('div', { class: 'panel-head' }, el('h2', { text: 'Where info lives' }), el('a', { href: '#/r/sources', class: 'small', text: 'Edit' })),
-    table(['Register', 'Status', 'Where it lives today', 'Audit areas'], d.sources.map((s) => ({
-      href: `#/r/sources/${s.id}`,
-      cells: [s.register, badge(enumLabel(S.tabs.sources.fields.status, s.status), tone(s.status)), s.location || '', s.audit_areas || ''], clip: [2, 3],
-    }))));
+  let sources = null;
+  if (d.sources && S.tabs[d.sources.register]) {
+    const st = d.sources.register; const T = S.tabs[st];
+    const cols = T.list.slice(0, 4);
+    sources = el('div', { class: 'panel' },
+      el('div', { class: 'panel-head' }, el('h2', { text: T.label }), el('a', { href: `#/r/${st}`, class: 'small', text: 'Edit' })),
+      table(cols.map((f) => T.fields[f]?.label || f), d.sources.rows.map((s) => ({
+        href: `#/r/${st}/${s.id}`, cells: cols.map((f) => valueNode(st, f, s[f], s)), clip: [2, 3],
+      }))));
+  }
 
-  v.replaceChildren(head, kpis,
-    el('div', { class: 'grid2' }, areaPanel, attention),
-    el('h2', { text: 'Registers' }), cards,
-    el('div', { class: 'grid2' }, overdue, soon),
-    el('div', { class: 'grid2' }, hold, ageing),
-    el('div', { class: 'grid2' }, deliveries, sources));
+  const pair = (a, b) => (a || b ? el('div', { class: 'grid2' }, a, b) : null);
+  v.replaceChildren(...[head, kpis, readinessRow, el('h2', { text: 'Registers' }), cards,
+    pair(overdue, soon), pair(hold, ageing), pair(deliveries, sources)].filter(Boolean));
 }
 
 function table(headers, rows) {
@@ -281,23 +296,37 @@ function table(headers, rows) {
 
 /* ---------- upload & import ---------- */
 
-async function checklistOptions() {
-  try { return (await api('checklist')).items; } catch { return []; }
-}
-
 async function showUpload(uploadId, params) {
   const v = show('#view-upload');
   const preTab = params.get('tab') || 'auto';
   const file = el('input', { type: 'file', accept: '.xlsx,.xlsm,.csv,.docx,.pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp', hidden: true });
   const fileName = el('span', { class: 'muted', text: 'Excel (.xlsx), CSV, Word (.docx), PDF (incl. scanned) or a photo/scan (.jpg, .png, .tif) · up to 25 MB' });
   const drop = el('div', { class: 'drop', tabIndex: 0, role: 'button' }, el('strong', { text: 'Drop a file here or click to choose' }), fileName, file);
+  const docLabel = (d) => `${d.name}${d.mode === 'evidence' ? ' (evidence)' : d.register && S.tabs[d.register] ? ` → ${S.tabs[d.register].label}` : ''}`;
   const tabSel = el('select', { name: 'tab' },
     el('option', { value: 'auto', text: 'Detect automatically' }),
-    el('optgroup', { label: 'Register' }, S.order.map((t) => el('option', { value: t, text: S.tabs[t].label }))),
+    S.docTypes.length ? el('optgroup', { label: 'Document types' }, S.docTypes.filter((d) => d.mode === 'evidence' || S.tabs[d.register]).map((d) => el('option', { value: `dt:${d.id}`, text: docLabel(d), title: d.description || '' }))) : null,
+    el('optgroup', { label: 'Registers' }, S.order.map((t) => el('option', { value: t, text: S.tabs[t].label, title: S.tabs[t].description || '' }))),
     el('option', { value: 'evidence', text: 'Evidence only (just store the file)' }));
-  tabSel.value = S.tabs[preTab] || preTab === 'evidence' ? preTab : 'auto';
+  const preDoc = params.get('doctype');
+  tabSel.value = preDoc ? `dt:${preDoc}` : S.tabs[preTab] || preTab === 'evidence' ? preTab : 'auto';
+  if (tabSel.selectedIndex < 0) tabSel.value = 'auto';
   const refSel = el('select', { name: 'checklist_ref' }, el('option', { value: '', text: '— none —' }));
-  checklistOptions().then((items) => refSel.append(...items.map((i) => el('option', { value: i.ref, text: `${i.ref} – ${String(i.item).slice(0, 70)}` }))));
+  const checklistTab = S.order.find((t) => S.tabs[t].builtin === 'checklist');
+  if (checklistTab) {
+    const T = S.tabs[checklistTab];
+    api(checklistTab).then(({ items }) => refSel.append(...items.map((i) => el('option', { value: i[T.key[0]], text: titleOf(checklistTab, i).slice(0, 90) })))).catch(() => {});
+  }
+  const hint = el('p', { class: 'muted small' });
+  const showHint = () => {
+    const v = tabSel.value;
+    const d = v.startsWith('dt:') ? S.docTypes.find((x) => `dt:${x.id}` === v) : null;
+    hint.textContent = d ? `${d.description || ''} ${d.mode === 'fields' ? 'Read as one record.' : d.mode === 'evidence' ? 'Stored, not read into a register.' : 'Read as a table.'}`
+      : S.tabs[v] ? S.tabs[v].description || '' : v === 'auto' ? 'The app picks the register (or a document type whose keywords are in the file name).' : '';
+    if (d?.checklist_ref && !refSel.value) refSel.value = d.checklist_ref;
+  };
+  tabSel.addEventListener('change', showHint);
+  showHint();
   const go = el('button', { type: 'submit', class: 'primary', text: 'Upload and read', disabled: true });
   const msg = el('p', { class: 'error' });
   const result = el('div', { class: 'result' });
@@ -315,13 +344,15 @@ async function showUpload(uploadId, params) {
     el('div', { class: 'form-row' },
       el('label', {}, 'What is this document?', tabSel),
       el('label', {}, 'Evidence for audit item (optional)', refSel)),
+    hint,
     el('div', { class: 'actions' }, go), msg);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!chosen) return;
     go.disabled = true; go.textContent = /\.(pdf|jpe?g|png|tiff?|bmp)$/i.test(chosen.name) ? 'Reading (scans take a few seconds per page)…' : 'Reading…'; msg.textContent = '';
     try {
-      const q = new URLSearchParams({ filename: chosen.name, tab: tabSel.value });
+      const q = new URLSearchParams({ filename: chosen.name });
+      if (tabSel.value.startsWith('dt:')) q.set('doc_type', tabSel.value.slice(3)); else q.set('tab', tabSel.value);
       if (refSel.value) q.set('checklist_ref', refSel.value);
       const r = await api(`uploads?${q}`, { method: 'POST', raw: chosen });
       S.uploads = null;
@@ -338,8 +369,9 @@ async function showUpload(uploadId, params) {
   if (uploadId) {
     try {
       const up = await api(`uploads/${uploadId}`);
-      if (up.tab === null && up.status === 'stored') return renderResult(result, up, null, null);
-      const a = await api(`uploads/${uploadId}/analyse`, { method: 'POST', body: { tab: up.tab || 'auto' } });
+      const dt = up.doc_type_id ? S.docTypes.find((d) => d.id === up.doc_type_id) : null;
+      if ((up.tab === null && up.status === 'stored' && !dt) || dt?.mode === 'evidence') return renderResult(result, up, null, null);
+      const a = await api(`uploads/${uploadId}/analyse`, { method: 'POST', body: { tab: up.tab || 'auto', docType: up.doc_type_id || undefined } });
       renderResult(result, up, a, null);
     } catch (err) { result.replaceChildren(el('p', { class: 'note tone-bad', text: err.message })); }
   }
@@ -352,8 +384,9 @@ function renderResult(box, upload, a, previous) {
     upload.checklist_ref ? ` · evidence for audit item ${upload.checklist_ref}` : ''));
   if (previous) parts.push(el('p', { class: 'note tone-warn', text: `This exact file was already uploaded on ${fmtWhen(previous.created_at)} as "${previous.filename}". Importing again only applies differences.` }));
 
-  if (!a) {
-    parts.push(el('p', { class: 'note tone-ok', text: 'Stored as evidence.' }));
+  if (!a || a.mode === 'evidence') {
+    const dt = upload.doc_type_id ? S.docTypes.find((d) => d.id === upload.doc_type_id) : null;
+    parts.push(el('p', { class: 'note tone-ok', text: `Stored as evidence${dt ? ` (${dt.name})` : ''}.${upload.checklist_ref ? '' : ' Tip: pick an audit item above when uploading so it counts as evidence for that item.'}` }));
     return box.replaceChildren(...parts);
   }
 
@@ -375,6 +408,7 @@ function renderResult(box, upload, a, previous) {
   const reanalyse = async (extra = {}) => {
     try {
       const body = { tab: tabSel.value, ...extra };
+      if (a.docType && tabSel.value === a.tab && !('docType' in extra)) body.docType = a.docType.id;
       if (extra.keepTable !== false && tableSel && !('table' in extra)) body.table = Number(tableSel.value);
       const next = await api(`uploads/${upload.id}/analyse`, { method: 'POST', body });
       renderResult(box, upload, next, previous);
@@ -402,8 +436,14 @@ function renderResult(box, upload, a, previous) {
 
   const tab = S.tabs[a.tab];
   const detected = el('p', { class: 'note tone-ok' }, `Read as `, el('strong', { text: tab.label }),
+    a.docType ? ` using document type "${a.docType.name}"` : '',
     a.mode === 'table' ? ` · ${a.tables[a.table]?.name || ''}, header on row ${a.headerRow + 1}` : ' · single document');
-  parts.push(detected, controls);
+  parts.push(detected);
+  if (a.unmatched) parts.push(el('p', { class: 'note tone-warn', text: `None of this file's headings are known to ${tab.label} yet. Choose a field for each column below; the register remembers your choices when you import.` }));
+  if (S.user.role === 'admin' && !a.docType) {
+    controls.append(el('button', { type: 'button', text: 'Save as document type…', title: 'Remember this register, reading mode and column mapping under a name you can pick at upload', onclick: () => saveAsDocType(upload, a, reanalyse) }));
+  }
+  parts.push(controls);
 
   if (a.mode === 'fields') {
     parts.push(fieldsForm(upload, a));
@@ -479,7 +519,7 @@ function renderResult(box, upload, a, previous) {
   importBtn.addEventListener('click', async () => {
     importBtn.disabled = true; importBtn.textContent = 'Importing…';
     try {
-      const res = await api(`uploads/${upload.id}/import`, { method: 'POST', body: { tab: a.tab, table: a.table, headerRow: a.headerRow, mapping: a.mapping, exclude: [...excluded] } });
+      const res = await api(`uploads/${upload.id}/import`, { method: 'POST', body: { tab: a.tab, docType: a.docType?.id, table: a.table, headerRow: a.headerRow, mapping: a.mapping, exclude: [...excluded] } });
       showImported(box, res);
     } catch (err) { done.replaceChildren(el('p', { class: 'note tone-bad', text: err.message })); refresh(); }
   });
@@ -488,6 +528,20 @@ function renderResult(box, upload, a, previous) {
     el('p', { class: 'muted small', text: 'Pick a field for each column, untick rows you don\'t want, then import. Changed values show the old value crossed out. Empty cells never clear existing data.' }),
     wrap);
   box.replaceChildren(...parts);
+}
+
+async function saveAsDocType(upload, a, reanalyse) {
+  const tab = S.tabs[a.tab];
+  const name = prompt(`Name for this document type (e.g. "ACC issues export"). It will read files into ${tab.label} ${a.mode === 'fields' ? 'as one record' : 'as a table'} with the current column mapping.`);
+  if (!name) return;
+  const words = upload.filename.replace(/\.[^.]+$/, '').replace(/[\d_\-.()]+/g, ' ').trim().toLowerCase();
+  const mapping = {};
+  if (a.mode === 'table') a.headers.forEach((h, i) => { if (h) mapping[h] = a.mapping[i] || ''; });
+  try {
+    const dt = await api('doctypes', { method: 'POST', body: { name, register: a.tab, mode: a.mode === 'fields' ? 'fields' : 'table', keywords: words ? [words] : [], mapping } });
+    await reloadSchema();
+    await reanalyse({ docType: dt.id, keepTable: false });
+  } catch (err) { alert(err.message); }
 }
 
 function fieldsForm(upload, a) {
@@ -505,7 +559,7 @@ function fieldsForm(upload, a) {
     e.preventDefault();
     const record = readFields(tab, form);
     try {
-      const res = await api(`uploads/${upload.id}/import`, { method: 'POST', body: { tab: a.tab, mode: 'fields', record } });
+      const res = await api(`uploads/${upload.id}/import`, { method: 'POST', body: { tab: a.tab, docType: a.docType?.id, mode: 'fields', record } });
       showImported(form.parentElement, res);
     } catch (e2) { err.textContent = e2.message; }
   });
@@ -517,6 +571,7 @@ function showImported(box, res) {
   box.replaceChildren(el('div', { class: 'note tone-ok' },
     el('strong', { text: `Imported into ${tab.label}: ` }),
     `${res.created} created, ${res.updated} updated, ${res.unchanged} unchanged, ${res.skipped} skipped.`),
+  res.learned?.register?.length ? el('p', { class: 'note', text: `Learned for next time: ${res.learned.register.join('; ')}.` }) : '',
   el('div', { class: 'actions' },
     el('a', { class: 'button primary', href: `#/r/${res.tab}`, text: `Open ${tab.label}` }),
     el('a', { class: 'button', href: '#/', text: 'Dashboard' }),
@@ -569,6 +624,9 @@ async function showRegister(name, openId) {
   $('#reg-import').href = `#/upload?tab=${name}`;
   $('#reg-export').href = `/api/${name}/export.xlsx`;
   $('#reg-template').href = `/api/${name}/template.xlsx`;
+  $('#reg-edit').href = `#/settings/registers/${name}`;
+  $('#reg-edit').textContent = S.user.role === 'admin' ? 'Edit register' : 'Register settings';
+  $('#reg-desc').textContent = t.description || '';
   if (changed) {
     $('#search').value = '';
     const sf = statusField(name);

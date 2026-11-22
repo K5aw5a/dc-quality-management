@@ -6,6 +6,7 @@
   <title>Quality Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
+  <script src="/settings.js" defer></script>
 </head>
 <body>
   <section id="login-view" class="login" hidden>
@@ -28,6 +29,9 @@
         <a href="#/files" data-route="files">Uploaded files</a>
         <p class="nav-head">Registers</p>
         <div id="nav-registers"></div>
+        <p class="nav-head">Settings</p>
+        <a href="#/settings/registers" data-route="settings/registers">Edit registers</a>
+        <a href="#/settings/doctypes" data-route="settings/doctypes">Document types</a>
       </nav>
       <div class="side-foot">
         <span id="whoami" class="muted small"></span>
@@ -39,13 +43,15 @@
       <section id="view-dashboard" hidden></section>
       <section id="view-upload" hidden></section>
       <section id="view-files" hidden></section>
+      <section id="view-settings" hidden></section>
       <section id="view-register" hidden>
         <div class="page-head">
-          <div><h1 id="reg-title"></h1><p id="reg-summary" class="muted"></p></div>
+          <div><h1 id="reg-title"></h1><p id="reg-desc" class="reg-desc"></p><p id="reg-summary" class="muted"></p></div>
           <div class="actions">
             <a id="reg-import" class="button" href="#/upload">Import file</a>
             <a id="reg-export" class="button" href="#" download>Export .xlsx</a>
             <a id="reg-template" class="button" href="#" download>Blank template</a>
+            <a id="reg-edit" class="button" href="#">Edit register</a>
             <button id="new-btn" type="button" class="primary">New</button>
           </div>
         </div>

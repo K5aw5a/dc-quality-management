@@ -24,8 +24,14 @@
 - [x] Photo/scan uploads (.jpg, .png, .tif, .bmp)
 - [x] OCR-tolerant matching (joined headings, O/0 and l/1 in dates and numbers)
 
-## Next: v0.4 import quality
-- [ ] Remember the column mapping per file name pattern (so the weekly export imports in one click)
+## Done: v0.4 editable registers
+- [x] Registers stored in the database; editor for purpose, columns, types, status options (colour, done / on hold / N/A), rules
+- [x] Create / archive registers; hidden columns and archived registers keep their data
+- [x] Document types: register, reading mode, file-name words, default audit item, saved column mapping
+- [x] Learning: headings mapped by hand at import are remembered by the register and the document type
+- [x] Manual column mapping when a chosen register recognises none of a file's headings
+
+## Next: v0.5 import quality
 - [ ] Encrypted PDFs with an empty user password (common "protected" exports)
 - [ ] Import several files at once
 - [ ] Deskew / rotate crooked scans before OCR; JBIG2 scans

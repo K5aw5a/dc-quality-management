@@ -21,7 +21,20 @@ Nothing changes until you click Import. Re-importing an updated register only ap
 
 For single documents (a calibration certificate, an NCR form, an ITP cover sheet), it reads `Label: value` pairs and pre-fills a form for you to check and save. Any file can also be stored as **evidence** against an audit checklist item.
 
-**2. Registers** (one tab each, editable, exportable to .xlsx, with a blank template):
+**2. Registers you shape yourself** (Settings → *Edit registers*, admin only). Each register has:
+- a **purpose** ("what it stands for"), shown on its page and when uploading;
+- **columns** you can add, rename, reorder, hide or make required, with a type (text, long text, status/choice, date, number, yes/no, link);
+- **headings in files that mean this column**, which drive the automatic matching (e.g. *NCR No, Issue ID, Ref → ID*);
+- **status options** with a colour and flags: *done* (never overdue, counts as ready), *on hold* (on the dashboard's on-hold list), *N/A* (left out of readiness %), plus other words that mean that status (e.g. *Code B → Approved as noted*);
+- **rules**: which columns identify a record (so re-imports update instead of duplicating), the title, the status column, the due-date column and "due soon" window, the on-hold reason column, and an optional age counter (e.g. *Days in review* since *Date submitted* while *Submitted / Under review*).
+
+You can also **create new registers** (e.g. Procedures, Training/TBT, RFIs) or **archive** ones you don't use. Removing a column only hides it, and archiving keeps the records, so nothing is ever deleted.
+
+**Learning:** when you correct a column in an import preview, the register remembers that heading for next time.
+
+**Document types** (Settings → *Document types*) are named kinds of files you pick at upload, e.g. *ACC issues export*, *Calibration certificate*, *Procedure*. Each says which register it goes into, whether it's read as a **table**, a **single document** or stored as **evidence only**, which words in the file name identify it, a default audit item, and a **saved column mapping**. "Save as document type…" in an import preview creates one from the current file, and later column choices are added to it automatically. Files whose names contain a type's words are recognised automatically.
+
+The starting registers (all editable):
 
 | Register | Key columns | Computed |
 | --- | --- | --- |
@@ -97,7 +110,9 @@ The suite covers the readers (xlsx/csv/docx/pdf, scanned PDFs with JPEG/CCITT/Fl
 ## Project layout
 
 ```
-src/schema.js        registers, fields, column synonyms, status colours, dashboard rules
+src/schema.js        the STARTING registers (copied into the database on first run)
+src/registry.js      register definitions stored in the DB: validate, compile, cache
+src/settings.js      editing registers and document types; learning headings from imports
 src/parsers/         zip, xml, xlsx (read+write), csv, docx, pdf readers, png/tiff encoders — no dependencies
 src/ocr.js           OCR via Windows built-in OCR (PowerShell) or Tesseract
 src/values.js        dates / numbers / yes-no / status parsing
@@ -107,7 +122,7 @@ src/uploads.js       file storage (content-addressed, outside git)
 src/resources.js     validation, CRUD, optimistic concurrency, activity log
 src/db.js            SQLite, migrations, additive schema sync
 src/app.js           HTTP routes, security headers
-public/              vanilla JS frontend (no build step)
+public/              vanilla JS frontend (no build step); settings.js = register/document-type editors
 test/                node:test suite + synthetic fixtures
 deploy/              systemd, nginx, env example, backup script
 docs/                architecture, decision log, roadmap
