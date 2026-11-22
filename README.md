@@ -1,133 +1,147 @@
-# DC Quality Management Workspace
+# DC Quality Management
 
-**A quality dashboard for data center projects. Upload the registers, logs and certificates you already have (Excel, CSV, Word, PDF). The app reads them into structured registers and shows audit readiness and what's overdue, due soon or on hold on one page.**
+**One place to run quality on a data center construction project.** Drop in the registers, logs, certificates and scans you already have. The app reads them into structured registers and shows on one page how ready you are for the next quality audit, and what is overdue, due soon or on hold.
 
-*Stack: Node.js (zero runtime dependencies, no build step), SQLite, vanilla JS. Runs on a laptop with nothing to install except Node.*
+Built for the QA/QC lead of a contractor package (for example BMS and EPMS: engineering, supply, installation, integration, testing, commissioning and handover). It runs on an ordinary work laptop with nothing to install except Node.js.
 
 ---
 
-## What it does
+## Why it exists
 
-**1. Upload a document → preview → import.**
-Pick a file and say what it is (or let the app detect it). The app:
-- finds the table, even when the header row sits under a summary block (e.g. row 8);
-- matches columns to fields by name ("Submittal No", "Ref", "Doc no" → *Ref*; "Next due", "Valid until" → *Due date*);
-- reads dates (`17/09/2026`, `17-Sep-26`, `17 de septiembre de 2026`, Excel dates), numbers (`1.234,5` or `1,234.5`), yes/no (`Y`, `✓`) and statuses (`Code B` → *Approved as noted*);
-- shows every row as **new / update / unchanged / skipped**, with changed values highlighted. You can change any column's field, untick rows, then import.
+On a data center project the quality information is everywhere: submittal logs in the common data environment (e.g. Autodesk Construction Cloud), issues and NCRs in another export, ITPs and check sheets in folders, calibration certificates as PDFs or scans, deliveries in emails, and an audit readiness checklist in Excel. Preparing for a client or main-contractor quality audit means chasing all of it by hand, and nobody has one current picture.
 
-Nothing changes until you click Import. Re-importing an updated register only applies the differences, and empty cells never wipe existing data.
+This app gives you that picture without retyping anything:
 
-**Scanned PDFs and photos** (`.jpg`, `.png`, `.tif`) are read with OCR. On Windows 10/11 the app uses the **OCR engine built into Windows**, so there is nothing to install. On Linux/servers it uses **Tesseract** if installed (`apt install tesseract-ocr`). Scanned pages are found automatically: a page with no text and a page-sized image. The page image is passed to OCR (JPEG, CCITT fax/TIFF and Flate scans are supported), and the words are laid out into rows and columns like any other table. The preview flags OCR results so you check them before importing.
+- **It reads what you already have.** Excel, CSV, Word, PDF, scanned PDFs and photos go in as they are.
+- **It keeps one register per topic:** audit checklist, submittals, deliveries, materials, ITPs, benchmarks/FOK, issues/NCRs, calibration, installer tasks, plus any registers you add.
+- **It shows what needs attention:** audit readiness by area, missing and partial evidence, overdue and blocked items, submittals waiting at the GC, upcoming deliveries.
+- **It keeps a trail:** every change records who, when and what, and every imported record links back to its source file.
 
-For single documents (a calibration certificate, an NCR form, an ITP cover sheet), it reads `Label: value` pairs and pre-fills a form for you to check and save. Any file can also be stored as **evidence** against an audit checklist item.
+## How you use it
 
-**2. Registers you shape yourself** (Settings → *Edit registers*, admin only). Each register has:
-- a **purpose** ("what it stands for"), shown on its page and when uploading;
-- **columns** you can add, rename, reorder, hide or make required, with a type (text, long text, status/choice, date, number, yes/no, link);
-- **headings in files that mean this column**, which drive the automatic matching (e.g. *NCR No, Issue ID, Ref → ID*);
-- **status options** with a colour and flags: *done* (never overdue, counts as ready), *on hold* (on the dashboard's on-hold list), *N/A* (left out of readiness %), plus other words that mean that status (e.g. *Code B → Approved as noted*);
-- **rules**: which columns identify a record (so re-imports update instead of duplicating), the title, the status column, the due-date column and "due soon" window, the on-hold reason column, and an optional age counter (e.g. *Days in review* since *Date submitted* while *Submitted / Under review*).
+1. **Upload a document.** Choose what it is (a register, or a saved *document type* such as "ACC issues export" or "Calibration certificate"), or let the app detect it.
+2. **Check the preview.** Each row is marked **new, update, unchanged** or **skipped**, and changed values are highlighted. Fix any column the app matched wrongly, untick rows you don't want, then **Import**. Nothing changes before you click Import.
+3. **Next time it maps itself.** Headings you corrected are remembered, so the weekly export from the same source imports in one click.
+4. **Work from the dashboard.** Readiness %, items needing action with their gap and owner, overdue / due soon / on hold, submittal ageing at the GC, and upcoming deliveries with submittal-approved and MIR flags.
+5. **Keep evidence with the audit.** Any file (a procedure, a presentation, a signed sheet) can be stored as evidence against an audit checklist item.
 
-You can also **create new registers** (e.g. Procedures, Training/TBT, RFIs) or **archive** ones you don't use. Removing a column only hides it, and archiving keeps the records, so nothing is ever deleted.
+## What's inside
 
-**Learning:** when you correct a column in an import preview, the register remembers that heading for next time.
+### Reading documents
+- **Spreadsheets and tables:** finds the header row even under a summary block, and matches columns by name ("Submittal No", "Doc no" → *Ref*; "Next due", "Valid until" → *Due date*).
+- **Single documents** such as a calibration certificate, an NCR form or an ITP cover sheet: reads `Label: value` pairs into a pre-filled form to check and save.
+- **Scanned PDFs and photos** with OCR. On Windows 10/11 it uses the OCR engine built into Windows (nothing to install); on servers it uses Tesseract.
+- **Messy values:** day-first dates (`17/09/2026`, `17-Sep-26`, Spanish month names, Excel dates), EU/UK numbers, yes/no (`Y`, `✓`), review codes (`Code B` → *Approved as noted*), and common OCR slips (O/0, l/1).
+- **Safe updates:** re-importing only applies differences, and empty cells never wipe existing data.
 
-**Document types** (Settings → *Document types*) are named kinds of files you pick at upload, e.g. *ACC issues export*, *Calibration certificate*, *Procedure*. Each says which register it goes into, whether it's read as a **table**, a **single document** or stored as **evidence only**, which words in the file name identify it, a default audit item, and a **saved column mapping**. "Save as document type…" in an import preview creates one from the current file, and later column choices are added to it automatically. Files whose names contain a type's words are recognised automatically.
+### Registers you shape yourself (Settings → *Edit registers*)
+- A **purpose** for each register: what it is for, shown on its page and when uploading.
+- **Columns:** add, rename, reorder, hide, make required. Types are text, long text, status/choice, date, number, yes/no and link.
+- **Headings in files that mean each column**, which drive the automatic matching.
+- **Status options** with a colour (green / amber / red / grey) and flags: *done* (never overdue, counts as ready), *on hold* (listed with its reason on the dashboard), *N/A* (left out of readiness %).
+- **Rules:** what identifies a record, the title, the due-date column and "due soon" window, the hold-reason column, and an age counter (e.g. *Days in review*).
+- **Create** your own registers (Procedures, Training/TBT, RFIs…) or **archive** ones you don't use. Hidden columns and archived registers keep their data; nothing is deleted.
 
-The starting registers (all editable):
+### Document types (Settings → *Document types*)
+Named kinds of files you upload regularly. Each says which register it goes into, whether it's read as a **table**, a **single document** or kept as **evidence only**, which words in the file name identify it, a default audit item, and its saved column mapping. "Save as document type…" in an import preview creates one from the file in front of you.
 
-| Register | Key columns | Computed |
-| --- | --- | --- |
-| Audit checklist | ref, area, item, status (Ready/Partial/Missing/Not checked/N/A), where in ACC/TIDP, owner, gap/action, QP ref, what to have ready | evidence files |
-| Submittal register | ref, title, system, rev, date submitted, GC status, blocker, owner | days in review |
-| Delivery tracker | PO, item, supplier, qty, expected, actual, status, submittal approved?, MIR done? | |
-| Material tracker | item, delivered qty, location, installed qty, expiry, installer/area | remaining |
-| ITP register | ITP no., activity, system, rev, approval status, linked checklists | |
-| Benchmark / FOK register | item, system, location, responsible, status, approval date, comments | |
-| Issues / NCR log | ID, type, description, location, owner, raised, target, status | age |
-| Calibration register | ID, equipment, make/model, cal date, due date, certificate | |
-| Installer task list | area, task, installer, start/end, materials needed, status | |
-| Where info lives | register, status, where it lives today, audit areas | |
+### The starting registers
+All of them can be edited, renamed or archived.
 
-**3. Dashboard** (the main page):
-- audit readiness % and counts by status, a breakdown per area, and the missing/partial items with their gap/action;
-- a card per register (green = OK, amber = due soon / on hold, red = overdue);
-- overdue items, items due soon (14 days; 30 for calibration and material expiry), on hold and why;
-- ageing of submittals at the GC (0–7 / 8–14 / 15–28 / 29+ days), upcoming deliveries with submittal/MIR flags;
-- the "where info lives" map.
+| Register | Main columns |
+| --- | --- |
+| Audit checklist | ref, area, item, status (Ready / Partial / Missing / Not checked / N/A), where in the CDE, owner, gap / action, quality plan ref, what to have ready, evidence files |
+| Submittal register | ref, title, system, rev, date submitted, GC status, days in review, blocker, owner |
+| Delivery tracker | PO, item, supplier, qty, expected / actual date, status, submittal approved?, MIR done? |
+| Material tracker | item, delivered qty, location, installed qty, remaining, expiry, installer / area |
+| ITP register | ITP no., activity, system, rev, approval status, linked checklists |
+| Benchmark / FOK register | item, system, location, responsible party, status, approval date, comments |
+| Issues / NCR log | ID, type, description, location, owner, raised, target, status, age |
+| Calibration register | ID, equipment, make / model, cal date, due date, certificate |
+| Installer task list | area, task, installer, start / end, materials needed, status |
+| Where info lives | each register, where its information lives today, audit areas it supports |
 
-Every change (manual or imported) is recorded in each record's history: who, when, and which field went from what to what. Imported records link back to the source file.
+### Everyday features
+- Search and filter every register, edit records in place, and see each record's history.
+- Export any register, or all of them, to Excel; download a blank template.
+- Company look: navy top bar, optional company logo, and Light / Dark / Auto per person.
+- Sign-in for every user, admin and member roles, and protection against two people overwriting each other's edits.
 
-## Run it (Windows / PowerShell)
+## Getting started (Windows / PowerShell)
 
-Needs Node.js 22.13+ (`node -v`).
+You need Node.js 22.13 or newer (`node -v`). In the app folder:
 
 ```powershell
 $env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"
 $env:PROJECT_NAME = "My project"
+$env:ADMIN_USER = "admin"; $env:ADMIN_PASSWORD = "at-least-10-characters"
 npm.cmd start
 ```
 
-The first time, also set `$env:ADMIN_USER` and `$env:ADMIN_PASSWORD` (10+ characters) to create the admin. Then open http://127.0.0.1:3000.
-
-**Company logo (optional):** point `LOGO_FILE` to a local image (`.png`, `.jpg`, `.svg`), e.g. `$env:LOGO_FILE = "C:\Users\me\Pictures\logo.png"`. It's shown in the top bar and on the sign-in page. The file is not stored in the repository. The colours follow the company palette (slate, navy and blue, with the logo's swoosh colours as accents). Each person can choose Light, Dark or Auto under their name in the top-right menu.
-
-Keep `DB_PATH` **outside OneDrive** (a synced database file can be corrupted). Uploaded files are stored in an `uploads` folder next to the database, never in Git.
-
-Add a user (in a second window):
+Open http://127.0.0.1:3000 and sign in. `ADMIN_USER` / `ADMIN_PASSWORD` are only needed the first time. After that:
 
 ```powershell
-$env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"; $env:USER_PASSWORD = "a-long-password"; npm.cmd run create-user -- jane.doe
+$env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"; npm.cmd start
 ```
 
-On macOS/Linux use `DB_PATH=... npm start`. Other settings: `LOGO_FILE`, `PORT` (3000), `HOST` (127.0.0.1), `UPLOAD_DIR`, `COOKIE_SECURE=1` behind HTTPS, `TRUST_PROXY=1` behind nginx.
+- If PowerShell blocks `npm` ("running scripts is disabled"), use `npm.cmd` as shown.
+- Keep the database **outside OneDrive**: a synced database file can be corrupted. Uploaded files are stored in an `uploads` folder next to it.
+- To add a teammate:
+  ```powershell
+  $env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"; $env:USER_PASSWORD = "a-long-password"; npm.cmd run create-user -- jane.doe
+  ```
+  Add `--admin` to make them an admin. To let the whole team use one copy, run it on a server (see `deploy/`).
 
-### OCR settings
+### Settings
 
-| Variable | Default | Meaning |
+| Variable | Default | What it does |
 | --- | --- | --- |
+| `DB_PATH` | `./data/qm.db` | where the database lives |
+| `PROJECT_NAME` | Quality Management | name shown in the top bar |
+| `LOGO_FILE` | none | path to a local logo image (.png / .jpg / .svg) for the top bar and sign-in page |
+| `PORT` / `HOST` | 3000 / 127.0.0.1 | where the app listens |
+| `UPLOAD_DIR` | next to the database | where uploaded files are kept |
 | `OCR_ENGINE` | `windows` on Windows, else `tesseract` if found | `windows`, `tesseract` or `off` |
-| `OCR_LANG` | Windows: your profile languages · Tesseract: `eng` | e.g. `es-ES` / `en-GB` (Windows), `spa` / `eng+spa` (Tesseract) |
-| `OCR_MAX_PAGES` | 50 | max scanned pages read per file |
+| `OCR_LANG` | your Windows languages / `eng` | e.g. `en-GB`, `es-ES` (Windows); `eng+spa` (Tesseract) |
+| `OCR_MAX_PAGES` | 50 | scanned pages read per file |
+| `COOKIE_SECURE`, `TRUST_PROXY` | off | set to `1` when served over HTTPS behind nginx |
 
-The startup log shows which engine was found. Windows OCR needs the language's OCR component (installed with the display language; *Settings → Time & language → Language* to add more). If IT has locked PowerShell down (Constrained Language Mode), Windows OCR can't run; the app says so, and stores the file as evidence.
+The startup log shows which OCR engine was found. Windows OCR uses the OCR language packs installed with your display languages (*Settings → Time & language → Language* to add more).
 
-## What it can't read (yet)
+## Limits
 
-- **Poor scans**: OCR misreads blurry, skewed or very small text. Scan at 200–300 dpi, straight. Always check OCR previews.
-- **Scans saved as JBIG2 or JPEG 2000** (some copiers' "high compression" mode): re-scan as standard PDF/JPEG/TIFF.
-- Handwriting is not reliably read.
-- **Password-protected / encrypted PDFs**: save or print an unprotected copy.
-- **Old `.xls` / `.doc`**: open and "Save As" `.xlsx` / `.docx`.
-- Very complex PDF layouts (rotated text, tables drawn as images) may need the column mapping adjusted in the preview.
+- OCR misreads blurry, skewed or tiny text, and handwriting isn't read reliably. Scan at 200–300 dpi, and always check OCR previews.
+- Not supported: password-protected PDFs, scans saved as JBIG2 or JPEG 2000 (some copiers' "high compression" mode), and old `.xls` / `.doc` files (use "Save As" `.xlsx` / `.docx`).
+- If IT has locked PowerShell down, Windows OCR can't run. The app says so and keeps the file as evidence.
+- It runs on one machine at a time unless you deploy it to a server.
 
-## Tests
+## Your data
 
-```bash
-npm test
+Everything stays on the machine running the app: the database at `DB_PATH` and uploaded files in `UPLOAD_DIR`. Nothing is sent to outside services. **This repository is public, so never commit project documents, exports, the database or a client logo.** `.gitignore` already excludes the data folders when they sit inside the repo.
+
+---
+
+## For developers
+
+- **Stack:** Node.js standard library only (`node:http`, `node:sqlite`, `node:crypto`, `node:test`); no runtime dependencies, no build step. Vanilla JS frontend. File readers (zip/xlsx/docx/pdf, PNG/TIFF encoders) are written in-house.
+- **Tests:** `npm test` covers readers, OCR (real Tesseract tests are skipped when it isn't installed), value parsing, upload → preview → import, learning, register and document-type editing, dashboard figures, security, and database upgrades. Fixtures in `test/fixtures` are synthetic (`make_fixtures.py` regenerates them).
+- **Docs:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/DECISIONS.md`](docs/DECISIONS.md), [`docs/ROADMAP.md`](docs/ROADMAP.md).
+- **Deploy:** `deploy/` has a systemd unit, an nginx config, an env example and an encrypted backup script. CI runs the tests on every push.
+
 ```
-
-The suite covers the readers (xlsx/csv/docx/pdf, scanned PDFs with JPEG/CCITT/Flate pages), OCR (real Tesseract tests are skipped when it isn't installed), value parsing, upload → preview → import, re-import, evidence linking, exports, dashboard figures, auth/security, and upgrading a v0.1 database. Fixtures in `test/fixtures` are synthetic (`make_fixtures.py` regenerates them).
-
-## Project layout
-
-```
-src/schema.js        the STARTING registers (copied into the database on first run)
-src/registry.js      register definitions stored in the DB: validate, compile, cache
+src/schema.js        starting registers (copied into the database on first run)
+src/registry.js      register definitions stored in the database: validate, compile, cache
 src/settings.js      editing registers and document types; learning headings from imports
-src/parsers/         zip, xml, xlsx (read+write), csv, docx, pdf readers, png/tiff encoders — no dependencies
+src/parsers/         xlsx (read + write), csv, docx, pdf readers; zip/xml; png/tiff encoders
 src/ocr.js           OCR via Windows built-in OCR (PowerShell) or Tesseract
 src/values.js        dates / numbers / yes-no / status parsing
-src/importer.js      header detection, column mapping, row planning, commit
+src/importer.js      header detection, column mapping, preview planning, import
 src/dashboard.js     dashboard figures
-src/uploads.js       file storage (content-addressed, outside git)
-src/resources.js     validation, CRUD, optimistic concurrency, activity log
-src/db.js            SQLite, migrations, additive schema sync
+src/uploads.js       file storage (by content hash, outside git)
+src/resources.js     validation, records, optimistic concurrency, activity log
+src/db.js            SQLite, migrations, additive table sync
 src/app.js           HTTP routes, security headers
-public/              vanilla JS frontend (no build step); settings.js = register/document-type editors
-test/                node:test suite + synthetic fixtures
+public/              frontend (app.js, settings.js, theme.js, styles.css)
+test/                node:test suite and synthetic fixtures
 deploy/              systemd, nginx, env example, backup script
-docs/                architecture, decision log, roadmap
 ```
-
-**The repository is public.** Never commit project documents, exports or the database. They live in `DB_PATH` / `UPLOAD_DIR`, which `.gitignore` already excludes when kept inside the repo folder.
