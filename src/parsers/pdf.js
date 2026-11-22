@@ -6,6 +6,7 @@
 // images (no OCR), exotic font encodings.
 
 const zlib = require('node:zlib');
+const images = require('./images');
 
 const MAX_STREAM_BYTES = 50 * 1024 * 1024;
 const MAX_PAGES = 300;
@@ -225,23 +226,31 @@ class PdfDoc {
   }
 
   streamData(obj) {
-    if (!obj || !obj.isStream) return Buffer.alloc(0);
+    return this.decodeStream(obj).data;
+  }
+
+  // Applies the general-purpose filters. With imageCodecs, stops at an image
+  // codec (DCT/CCITT/JBIG2/JPX) and returns its name + parameters instead of failing.
+  decodeStream(obj, { imageCodecs = false } = {}) {
+    if (!obj || !obj.isStream) return { data: Buffer.alloc(0) };
     let data = Buffer.from(obj.raw, 'latin1');
     let filters = this.get(obj.dict.Filter);
     let parms = this.get(obj.dict.DecodeParms);
-    if (!filters) return data;
+    if (!filters) return { data };
     if (!Array.isArray(filters)) { filters = [filters]; parms = [parms]; }
     if (!Array.isArray(parms)) parms = [parms];
-    filters.forEach((f, i) => {
-      const name = this.get(f)?.name;
+    for (let i = 0; i < filters.length; i++) {
+      const name = this.get(filters[i])?.name;
       const p = this.get(parms[i]);
       if (name === 'FlateDecode' || name === 'Fl') data = predict(inflate(data), p, this);
       else if (name === 'ASCIIHexDecode' || name === 'AHx') data = asciiHex(data);
       else if (name === 'ASCII85Decode' || name === 'A85') data = ascii85(data);
       else if (name === 'LZWDecode' || name === 'LZW') data = predict(lzw(data, p ? this.get(p.EarlyChange) ?? 1 : 1), p, this);
-      else throw new Error('unsupported filter ' + name); // images etc.
-    });
-    return data;
+      else if (name === 'RunLengthDecode' || name === 'RL') data = runLength(data);
+      else if (imageCodecs) return { data, codec: { DCT: 'DCTDecode', CCF: 'CCITTFaxDecode' }[name] || name, parms: p || {} };
+      else throw new Error('unsupported filter ' + name);
+    }
+    return { data };
   }
 
   pages() {
@@ -309,6 +318,18 @@ function predict(data, parms, doc) {
     prev = row;
   }
   return out;
+}
+
+function runLength(data) {
+  const out = [];
+  for (let i = 0; i < data.length;) {
+    const n = data[i++];
+    if (n === 128) break;
+    if (n < 128) { for (let k = 0; k <= n && i < data.length; k++) out.push(data[i++]); }
+    else { const b = data[i++]; for (let k = 0; k < 257 - n; k++) out.push(b); }
+    if (out.length > MAX_STREAM_BYTES) break;
+  }
+  return Buffer.from(out);
 }
 
 function asciiHex(data) {
@@ -504,7 +525,7 @@ const mul = (a, b) => [
 ];
 const ID = [1, 0, 0, 1, 0, 0];
 
-function runContent(doc, data, resources, ctm0, page, items, depth, fontCache) {
+function runContent(doc, data, resources, ctm0, page, out, depth, fontCache) {
   const lx = new Lexer(data);
   const ops = [];
   let gs = { ctm: ctm0, font: null, size: 12, tc: 0, tw: 0, th: 1, tl: 0, rise: 0 };
@@ -534,7 +555,7 @@ function runContent(doc, data, resources, ctm0, page, items, depth, fontCache) {
     }
     const end = mul([1, 0, 0, 1, 0, gs.rise], mul(tm, gs.ctm));
     const size = Math.hypot(start[2], start[3]) || gs.size;
-    if (text) items.push({ page, x: start[4], y: start[5], endX: end[4], size, text });
+    if (text) out.items.push({ page, x: start[4], y: start[5], endX: end[4], size, text });
   };
 
   for (let guard = 0; guard < 2e6; guard++) {
@@ -577,12 +598,14 @@ function runContent(doc, data, resources, ctm0, page, items, depth, fontCache) {
       case 'Do': {
         if (depth > 5 || !(a[0] instanceof Name)) break;
         const xo = doc.get(xobjs[a[0].name]);
-        if (xo && xo.isStream && doc.get(xo.dict.Subtype)?.name === 'Form') {
+        if (xo && xo.isStream && doc.get(xo.dict.Subtype)?.name === 'Image') {
+          out.images.push({ page, xo, ctm: gs.ctm });
+        } else if (xo && xo.isStream && doc.get(xo.dict.Subtype)?.name === 'Form') {
           let content;
           try { content = doc.streamData(xo).toString('latin1'); } catch { break; }
           const mtx = doc.get(xo.dict.Matrix);
           const m = Array.isArray(mtx) && mtx.length === 6 ? mtx.map((x) => doc.get(x)) : ID;
-          runContent(doc, content, xo.dict.Resources ?? resources, mul(m, gs.ctm), page, items, depth + 1, fontCache);
+          runContent(doc, content, xo.dict.Resources ?? resources, mul(m, gs.ctm), page, out, depth + 1, fontCache);
         }
         break;
       }
@@ -636,32 +659,121 @@ function buildLines(items) {
   }).filter((l) => l.cells.length);
 }
 
+function colorSpaceOf(doc, csObj) {
+  let cs = doc.get(csObj);
+  if (Array.isArray(cs)) {
+    const kind = doc.get(cs[0])?.name;
+    if (kind === 'ICCBased') {
+      const n = doc.get(doc.get(cs[1])?.dict?.N);
+      return { kind: n === 4 ? 'cmyk' : n === 3 ? 'rgb' : 'gray' };
+    }
+    if (kind === 'Indexed' || kind === 'I') {
+      const base = colorSpaceOf(doc, cs[1]).kind;
+      let lookup = doc.get(cs[3]);
+      lookup = lookup instanceof PdfStr ? Buffer.from(lookup.bytes, 'latin1') : lookup?.isStream ? doc.streamData(lookup) : Buffer.alloc(0);
+      return { kind: 'indexed', base, hival: doc.get(cs[2]) || 0, lookup };
+    }
+    if (kind === 'CalRGB') return { kind: 'rgb' };
+    if (kind === 'CalGray') return { kind: 'gray' };
+    if (kind === 'Separation' || kind === 'DeviceN') return { kind: 'gray', invert: true };
+    cs = doc.get(cs[0]);
+  }
+  const name = cs instanceof Name ? cs.name : '';
+  if (name === 'DeviceRGB' || name === 'RGB') return { kind: 'rgb' };
+  if (name === 'DeviceCMYK' || name === 'CMYK') return { kind: 'cmyk' };
+  return { kind: 'gray' };
+}
+
+// Turn a PDF image XObject into a file an OCR engine can read.
+// Returns { format: 'jpeg'|'png'|'tiff', data } or { error }.
+function imageForOcr(doc, xo) {
+  const d = xo.dict;
+  const width = doc.get(d.Width) || doc.get(d.W); const height = doc.get(d.Height) || doc.get(d.H);
+  if (!width || !height) return { error: 'image without size' };
+  let dec;
+  try { dec = doc.decodeStream(xo, { imageCodecs: true }); } catch (e) { return { error: e.message }; }
+  const decode = doc.get(d.Decode);
+  const inverted = Array.isArray(decode) && doc.get(decode[0]) === 1;
+  if (dec.codec === 'DCTDecode') return { format: 'jpeg', data: dec.data };
+  if (dec.codec === 'CCITTFaxDecode') {
+    const p = dec.parms;
+    const blackIs1 = doc.get(p.BlackIs1) === true;
+    return {
+      format: 'tiff',
+      data: images.ccittToTiff({
+        data: dec.data, width: doc.get(p.Columns) || width, height: doc.get(p.Rows) || height,
+        k: doc.get(p.K) || 0, byteAlign: doc.get(p.EncodedByteAlign) === true, inverted: inverted !== blackIs1,
+      }),
+    };
+  }
+  if (dec.codec === 'JBIG2Decode') return { error: 'JBIG2-compressed scan (not supported; re-scan as JPEG/TIFF or "PDF (standard)")' };
+  if (dec.codec === 'JPXDecode') return { error: 'JPEG 2000 scan (not supported; re-save the PDF with JPEG compression)' };
+  if (dec.codec) return { error: `unsupported image encoding ${dec.codec}` };
+  if (doc.get(d.ImageMask) === true) {
+    return { format: 'png', data: images.pixelsToPng({ width, height, bpc: 1, colorSpace: { kind: 'gray' }, pixels: dec.data, decodeInvert: !inverted }) };
+  }
+  const bpc = doc.get(d.BitsPerComponent) || 8;
+  const cs = colorSpaceOf(doc, d.ColorSpace);
+  try {
+    return { format: 'png', data: images.pixelsToPng({ width, height, bpc, colorSpace: cs, pixels: dec.data, decodeInvert: inverted !== !!cs.invert }) };
+  } catch (e) { return { error: e.message }; }
+}
+
+// Lines, tables and text from positioned text items (PDF text or OCR words).
+function assemble(items, extra = {}) {
+  const lines = buildLines(items);
+  return {
+    kind: 'pdf',
+    ...extra,
+    lines: lines.map((l) => ({ page: l.page, cells: l.cells.map((c) => c.text) })),
+    // Rows are the gap-split cells; `layout` keeps positions so the importer
+    // can re-split each line against the header row's column positions.
+    tables: lines.length ? [{
+      name: extra.ocr ? 'Scanned text (OCR)' : 'PDF text',
+      rows: lines.map((l) => l.cells.map((c) => c.text)),
+      layout: lines.map((l) => ({ size: l.size, page: l.page, cells: l.cells, parts: l.parts })),
+    }] : [],
+    text: lines.map((l) => l.cells.map((c) => c.text).join('\t')).join('\n'),
+  };
+}
+
+const MIN_TEXT_CHARS = 25; // fewer characters than this on a page → treat it as scanned
+
 function readPdf(buf) {
   const doc = new PdfDoc(buf);
-  const items = []; const fontCache = new Map();
+  const out = { items: [], images: [] }; const fontCache = new Map();
   const pages = doc.pages();
   pages.forEach(({ node, resources }, i) => {
     let contents = doc.get(node.Contents);
     if (!contents) return;
     if (!Array.isArray(contents)) contents = [node.Contents];
     const data = contents.map((c) => { try { return doc.streamData(doc.get(c)).toString('latin1'); } catch { return ''; } }).join('\n');
-    try { runContent(doc, data, resources, ID, i + 1, items, 0, fontCache); } catch { /* keep what we have */ }
+    try { runContent(doc, data, resources, ID, i + 1, out, 0, fontCache); } catch { /* keep what we have */ }
   });
-  const lines = buildLines(items);
-  const text = lines.map((l) => l.cells.map((c) => c.text).join('\t')).join('\n');
-  return {
-    kind: 'pdf',
-    pages: pages.length,
-    lines: lines.map((l) => ({ page: l.page, cells: l.cells.map((c) => c.text) })),
-    // Rows are the gap-split cells; `layout` keeps positions so the importer
-    // can re-split each line against the header row's column positions.
-    tables: lines.length ? [{
-      name: 'PDF text',
-      rows: lines.map((l) => l.cells.map((c) => c.text)),
-      layout: lines.map((l) => ({ size: l.size, page: l.page, cells: l.cells, parts: l.parts })),
-    }] : [],
-    text,
-  };
+
+  // Find scanned pages: little or no text, and an image covering much of the page.
+  const chars = new Map();
+  for (const it of out.items) chars.set(it.page, (chars.get(it.page) || 0) + it.text.replace(/\s/g, '').length);
+  const scans = [];
+  pages.forEach(({ node }, i) => {
+    const page = i + 1;
+    if ((chars.get(page) || 0) >= MIN_TEXT_CHARS) return;
+    const box = (doc.get(node.MediaBox) || [0, 0, 612, 792]).map((v) => doc.get(v));
+    const pageArea = Math.abs((box[2] - box[0]) * (box[3] - box[1])) || 612 * 792;
+    const imgs = out.images.filter((im) => im.page === page)
+      .map((im) => ({ ...im, area: Math.abs(im.ctm[0] * im.ctm[3] - im.ctm[1] * im.ctm[2]) }))
+      .filter((im) => im.area >= pageArea * 0.25)
+      .sort((a, b) => b.area - a.area);
+    if (imgs.length) scans.push({ page, ...imageForOcr(doc, imgs[0].xo), rotate: Math.round(Math.atan2(imgs[0].ctm[1], imgs[0].ctm[0]) * 180 / Math.PI) });
+  });
+
+  const result = assemble(out.items, { pages: pages.length });
+  if (scans.length) {
+    result.scannedPages = scans.map((s) => s.page);
+    result.ocrImages = scans;
+    result.textItems = out.items; // kept so OCR words can be merged with the real text
+  }
+  return result;
 }
 
-module.exports = { readPdf, parseCMap, glyphChar, Lexer };
+module.exports = { readPdf, assemble, buildLines, parseCMap, glyphChar, Lexer };

@@ -17,6 +17,8 @@ Pick a file and say what it is (or let the app detect it). The app:
 
 Nothing changes until you click Import. Re-importing an updated register only applies the differences, and empty cells never wipe existing data.
 
+**Scanned PDFs and photos** (`.jpg`, `.png`, `.tif`) are read with OCR. On Windows 10/11 the app uses the **OCR engine built into Windows**, so there is nothing to install. On Linux/servers it uses **Tesseract** if installed (`apt install tesseract-ocr`). Scanned pages are found automatically: a page with no text and a page-sized image. The page image is passed to OCR (JPEG, CCITT fax/TIFF and Flate scans are supported), and the words are laid out into rows and columns like any other table. The preview flags OCR results so you check them before importing.
+
 For single documents (a calibration certificate, an NCR form, an ITP cover sheet), it reads `Label: value` pairs and pre-fills a form for you to check and save. Any file can also be stored as **evidence** against an audit checklist item.
 
 **2. Registers** (one tab each, editable, exportable to .xlsx, with a blank template):
@@ -65,9 +67,21 @@ $env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"; $env:USER_PASSWORD = "a-lon
 
 On macOS/Linux use `DB_PATH=... npm start`. Other settings: `PORT` (3000), `HOST` (127.0.0.1), `UPLOAD_DIR`, `COOKIE_SECURE=1` behind HTTPS, `TRUST_PROXY=1` behind nginx.
 
+### OCR settings
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OCR_ENGINE` | `windows` on Windows, else `tesseract` if found | `windows`, `tesseract` or `off` |
+| `OCR_LANG` | Windows: your profile languages · Tesseract: `eng` | e.g. `es-ES` / `en-GB` (Windows), `spa` / `eng+spa` (Tesseract) |
+| `OCR_MAX_PAGES` | 50 | max scanned pages read per file |
+
+The startup log shows which engine was found. Windows OCR needs the language's OCR component (installed with the display language; *Settings → Time & language → Language* to add more). If IT has locked PowerShell down (Constrained Language Mode), Windows OCR can't run; the app says so, and stores the file as evidence.
+
 ## What it can't read (yet)
 
-- **Scanned PDFs** (images, no text): no OCR. Upload the original Excel/Word, or an OCR'd PDF.
+- **Poor scans**: OCR misreads blurry, skewed or very small text. Scan at 200–300 dpi, straight. Always check OCR previews.
+- **Scans saved as JBIG2 or JPEG 2000** (some copiers' "high compression" mode): re-scan as standard PDF/JPEG/TIFF.
+- Handwriting is not reliably read.
 - **Password-protected / encrypted PDFs**: save or print an unprotected copy.
 - **Old `.xls` / `.doc`**: open and "Save As" `.xlsx` / `.docx`.
 - Very complex PDF layouts (rotated text, tables drawn as images) may need the column mapping adjusted in the preview.
@@ -78,13 +92,14 @@ On macOS/Linux use `DB_PATH=... npm start`. Other settings: `PORT` (3000), `HOST
 npm test
 ```
 
-The suite covers the readers (xlsx/csv/docx/pdf), value parsing, upload → preview → import, re-import, evidence linking, exports, dashboard figures, auth/security, and upgrading a v0.1 database. Fixtures in `test/fixtures` are synthetic (`make_fixtures.py` regenerates them).
+The suite covers the readers (xlsx/csv/docx/pdf, scanned PDFs with JPEG/CCITT/Flate pages), OCR (real Tesseract tests are skipped when it isn't installed), value parsing, upload → preview → import, re-import, evidence linking, exports, dashboard figures, auth/security, and upgrading a v0.1 database. Fixtures in `test/fixtures` are synthetic (`make_fixtures.py` regenerates them).
 
 ## Project layout
 
 ```
 src/schema.js        registers, fields, column synonyms, status colours, dashboard rules
-src/parsers/         zip, xml, xlsx (read+write), csv, docx, pdf readers — no dependencies
+src/parsers/         zip, xml, xlsx (read+write), csv, docx, pdf readers, png/tiff encoders — no dependencies
+src/ocr.js           OCR via Windows built-in OCR (PowerShell) or Tesseract
 src/values.js        dates / numbers / yes-no / status parsing
 src/importer.js      header detection, column mapping, row planning, commit
 src/dashboard.js     dashboard figures

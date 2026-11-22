@@ -288,8 +288,8 @@ async function checklistOptions() {
 async function showUpload(uploadId, params) {
   const v = show('#view-upload');
   const preTab = params.get('tab') || 'auto';
-  const file = el('input', { type: 'file', accept: '.xlsx,.xlsm,.csv,.docx,.pdf', hidden: true });
-  const fileName = el('span', { class: 'muted', text: 'Excel (.xlsx), CSV, Word (.docx) or PDF · up to 25 MB' });
+  const file = el('input', { type: 'file', accept: '.xlsx,.xlsm,.csv,.docx,.pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp', hidden: true });
+  const fileName = el('span', { class: 'muted', text: 'Excel (.xlsx), CSV, Word (.docx), PDF (incl. scanned) or a photo/scan (.jpg, .png, .tif) · up to 25 MB' });
   const drop = el('div', { class: 'drop', tabIndex: 0, role: 'button' }, el('strong', { text: 'Drop a file here or click to choose' }), fileName, file);
   const tabSel = el('select', { name: 'tab' },
     el('option', { value: 'auto', text: 'Detect automatically' }),
@@ -319,7 +319,7 @@ async function showUpload(uploadId, params) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!chosen) return;
-    go.disabled = true; go.textContent = 'Reading…'; msg.textContent = '';
+    go.disabled = true; go.textContent = /\.(pdf|jpe?g|png|tiff?|bmp)$/i.test(chosen.name) ? 'Reading (scans take a few seconds per page)…' : 'Reading…'; msg.textContent = '';
     try {
       const q = new URLSearchParams({ filename: chosen.name, tab: tabSel.value });
       if (refSel.value) q.set('checklist_ref', refSel.value);
@@ -382,13 +382,17 @@ function renderResult(box, upload, a, previous) {
   tabSel.addEventListener('change', () => reanalyse({ keepTable: false }));
   tableSel?.addEventListener('change', () => reanalyse({ table: Number(tableSel.value) }));
   headerInput?.addEventListener('change', () => reanalyse({ table: a.table, headerRow: Number(headerInput.value) - 1 }));
-  if (a.mode === 'table' && (a.kind === 'pdf' || a.kind === 'docx')) {
+  if (a.mode === 'table' && ['pdf', 'docx', 'image'].includes(a.kind)) {
     controls.append(el('button', { type: 'button', text: 'Read as a single document instead', onclick: () => reanalyse({ mode: 'fields', keepTable: false }) }));
   }
   if (a.mode === 'fields' && a.tables.length) {
     controls.append(el('button', { type: 'button', text: 'Read as a table instead', onclick: () => reanalyse({ keepTable: false }) }));
   }
 
+  if (a.ocr && !a.ocr.error) {
+    const pages = a.ocr.pages || [];
+    parts.push(el('p', { class: 'note tone-warn', text: `Scanned ${pages.length === 1 ? 'page' : `pages (${pages.join(', ')})`} read with OCR (${a.ocr.engine}). OCR can misread characters, e.g. 0/O, 1/l, joined words: check the preview carefully before importing.${a.ocr.warnings?.length ? ' ' + a.ocr.warnings.join('; ') : ''}` }));
+  }
   if (a.mode === 'error' || a.mode === 'none') {
     parts.push(el('p', { class: 'note tone-warn', text: a.message }), controls);
     if (a.excerpt) parts.push(el('details', {}, el('summary', { text: 'Text read from the document' }), el('pre', { class: 'excerpt', text: a.excerpt })));

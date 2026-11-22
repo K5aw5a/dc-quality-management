@@ -4,6 +4,7 @@ const path = require('node:path');
 const { openDb } = require('./db');
 const { createApp } = require('./app');
 const { createUser } = require('./auth');
+const { detectEngine } = require('./ocr');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -51,6 +52,7 @@ server.on('error', (err) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`DC Quality Management listening on http://${HOST}:${PORT} (db: ${DB_PATH})`);
+  detectEngine().then((e) => console.log(e.name === 'off' ? `OCR for scanned documents: not available (${e.reason})` : `OCR for scanned documents: ${e.label}`));
 });
 
 function shutdown() {

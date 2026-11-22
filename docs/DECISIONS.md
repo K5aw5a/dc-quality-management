@@ -49,3 +49,8 @@ Short records of the decisions that shape the system: what was decided, why, and
 ### D10: Uploaded files and data stay out of Git
 **Decision:** Files are stored by SHA-256 in `UPLOAD_DIR` (default: next to the database). Fixtures are synthetic.
 **Why:** The repository is public and the documents belong to client projects.
+
+### D11: OCR with the engine already on the machine
+**Decision:** Scanned pages go to the OCR engine built into Windows 10/11 (Windows.Media.Ocr, called through Windows PowerShell with `-EncodedCommand`, so script execution policy doesn't apply), or to Tesseract where installed. `OCR_ENGINE` picks explicitly.
+**Why:** The app must run on an admin-managed laptop with nothing to install. Windows OCR is there already. Tesseract covers servers and CI. Bundling an OCR engine (e.g. WASM Tesseract + language data) would add tens of MB and third-party code.
+**Trade-off:** Windows OCR can be blocked by a locked-down PowerShell (Constrained Language Mode). Accuracy depends on scan quality, so OCR previews are flagged for checking. The Windows path can't run in CI; its output parsing is unit-tested, and the PowerShell is a widely used WinRT pattern.

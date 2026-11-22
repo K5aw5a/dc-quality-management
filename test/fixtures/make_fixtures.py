@@ -1,5 +1,5 @@
 """Regenerates the synthetic test fixtures (no real project data).
-Needs: python-docx, openpyxl, reportlab, and LibreOffice (soffice) for the Word->PDF file.
+Needs: python-docx, openpyxl, reportlab, Pillow, LibreOffice (soffice), poppler (pdftoppm) and libtiff (tiff2pdf).
 Run from the repo root:  python3 test/fixtures/make_fixtures.py
 """
 import os, subprocess
@@ -47,4 +47,19 @@ rows = [['1.1', '1. Pre-Start', 'Pre-start documentation', 'Ready', 'ACC > Quali
 for r, row in enumerate(rows, 9):
     for c, v in enumerate(row, 1): ws.cell(r, c, v)
 wb.save(os.path.join(D, 'checklist.xlsx'))
+# Scanned versions (images only, no text): JPEG, CCITT Group 4 and Flate-encoded pages
+import tempfile
+from PIL import Image
+from reportlab.pdfgen import canvas
+tmp = tempfile.mkdtemp()
+subprocess.run(['pdftoppm', '-r', '200', '-gray', '-png', os.path.join(D, 'ncr.pdf'), os.path.join(tmp, 'ncr')], check=True)
+subprocess.run(['pdftoppm', '-r', '200', '-gray', '-png', os.path.join(D, 'cert.pdf'), os.path.join(tmp, 'cert')], check=True)
+ncr = Image.open(os.path.join(tmp, 'ncr-1.png')).convert('L')
+ncr.save(os.path.join(D, 'scan-ncr-jpeg.pdf'), 'PDF', resolution=200, quality=70)
+cert = Image.open(os.path.join(tmp, 'cert-1.png')).convert('L')
+cert.point(lambda v: 255 if v > 160 else 0).convert('1').save(os.path.join(tmp, 'cert.tif'), compression='group4', dpi=(200, 200))
+subprocess.run(['tiff2pdf', '-o', os.path.join(D, 'scan-cert-g4.pdf'), os.path.join(tmp, 'cert.tif')], check=True)
+ncr.resize((1240, 1754)).save(os.path.join(tmp, 'ncr-small.png'))
+c = canvas.Canvas(os.path.join(D, 'scan-ncr-flate.pdf'), pagesize=A4)
+c.drawImage(os.path.join(tmp, 'ncr-small.png'), 0, 0, width=A4[0], height=A4[1]); c.showPage(); c.save()
 print('fixtures written to', D)

@@ -1,6 +1,6 @@
 {
   "name": "dc-quality-management",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Data center quality management workspace: submittals & documentation, trackers, inspections/audits.",
   "main": "src/server.js",

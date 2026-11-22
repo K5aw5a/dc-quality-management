@@ -18,11 +18,17 @@
 - [x] Dashboard: readiness by area, overdue / due soon / on hold, submittal ageing, upcoming deliveries
 - [x] .xlsx export per register / all registers, blank templates
 
-## Next: v0.3 import quality
+## Done: v0.3 scanned documents
+- [x] Scanned-page detection; page images extracted (JPEG, CCITT G3/G4 → TIFF, Flate/LZW/RLE → PNG)
+- [x] OCR via Windows built-in OCR (no install) or Tesseract; results cached per file
+- [x] Photo/scan uploads (.jpg, .png, .tif, .bmp)
+- [x] OCR-tolerant matching (joined headings, O/0 and l/1 in dates and numbers)
+
+## Next: v0.4 import quality
 - [ ] Remember the column mapping per file name pattern (so the weekly export imports in one click)
 - [ ] Encrypted PDFs with an empty user password (common "protected" exports)
-- [ ] OCR for scanned PDFs (optional, would need a local tool)
 - [ ] Import several files at once
+- [ ] Deskew / rotate crooked scans before OCR; JBIG2 scans
 - [ ] Training/TBT and O&M/as-built registers
 
 ## Later: inspections that are useful in the field

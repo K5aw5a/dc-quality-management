@@ -29,6 +29,7 @@ function matchScore(heading, list) {
   for (const a of list) {
     let s = 0;
     if (h === a) s = 1;
+    else if (a.length >= 4 && h.replace(/ /g, '') === a.replace(/ /g, '')) s = 0.95; // OCR often drops spaces ("NCRNo")
     else if (a.length >= 3 && ` ${h} `.includes(` ${a} `)) s = 0.75;
     else if (h.length >= 3 && a.length >= 3 && ` ${a} `.includes(` ${h} `) && h.split(' ').length >= 1 && h.length >= a.length / 2) s = 0.6;
     if (s) s += a.length / 1000; // prefer the more specific synonym
@@ -119,9 +120,18 @@ function convert(tabName, field, raw) {
   const def = TABS[tabName].fields[field];
   if (raw === null || raw === undefined || String(raw).trim() === '') return { value: null };
   let value;
+  // Typical OCR confusions inside dates/numbers: O→0, l/I/|→1, S→5, B→8, spaces around separators.
+  const ocrFix = (s) => String(s).replace(/[Oo]/g, '0').replace(/[lI|]/g, '1').replace(/S/g, '5').replace(/B/g, '8').replace(/\s*([/.\-])\s*/g, '$1');
   switch (def.type) {
-    case 'date': value = parseDate(raw); if (!value) return { warning: `${def.label}: couldn't read date "${raw}"` }; break;
-    case 'number': value = parseNumber(raw); if (value === null) return { warning: `${def.label}: "${raw}" is not a number` }; break;
+    case 'date':
+      value = parseDate(raw) || (typeof raw === 'string' ? parseDate(ocrFix(raw)) : null);
+      if (!value) return { warning: `${def.label}: couldn't read date "${raw}"` };
+      break;
+    case 'number':
+      value = parseNumber(raw);
+      if (value === null && typeof raw === 'string' && /^[\dOolIS|B.,\s]+$/.test(raw)) value = parseNumber(ocrFix(raw));
+      if (value === null) return { warning: `${def.label}: "${raw}" is not a number` };
+      break;
     case 'bool': value = parseBool(raw); if (!value) return { warning: `${def.label}: "${raw}" is not yes/no` }; break;
     case 'enum': {
       const r = parseEnum(def, raw);
@@ -251,7 +261,7 @@ function analyseFull(db, extracted, opts = {}) {
       const h = findHeader(t, table);
       if (h) cands.push({ tab: t, table: ti, header: h, score: h.score + bonus });
     });
-    if (!tables.length || extracted.kind === 'pdf' || extracted.kind === 'docx') {
+    if (!tables.length || ['pdf', 'docx', 'image'].includes(extracted.kind)) {
       const f = readFields(t, extracted);
       if (f.matched >= 2) cands.push({ tab: t, table: null, fields: f, score: f.matched * 0.6 + bonus });
     }
@@ -274,6 +284,7 @@ function analyseFull(db, extracted, opts = {}) {
 
   const base = {
     kind: extracted.kind,
+    ocr: extracted.ocr || null,
     tables: tables.map((t, i) => ({ index: i, name: t.name, rows: t.rows.length })),
     tabScores,
     excerpt: String(extracted.text || '').slice(0, 4000),
@@ -286,7 +297,9 @@ function analyseFull(db, extracted, opts = {}) {
     else {
       return {
         ...base, mode: 'none', tab,
-        message: extracted.text && extracted.text.trim()
+        message: extracted.ocr && extracted.ocr.error && !(extracted.text || '').trim()
+          ? `This looks like a scanned document, but OCR could not read it: ${extracted.ocr.error}. The file is stored as evidence.`
+          : extracted.text && extracted.text.trim()
           ? 'Could not find a register table or recognisable fields in this document. It is stored as evidence; check the excerpt below or pick another register.'
           : 'No readable text was found. If this is a scanned PDF, it needs OCR first (or upload the original Excel/Word file). It is stored as evidence.',
       };

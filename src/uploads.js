@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { extract, kindOf } = require('./parsers');
+const { extractFull, kindOf } = require('./parsers');
 const { HttpError } = require('./resources');
 
 // Files are stored by content hash in uploadDir (outside git, next to the DB).
@@ -38,9 +38,16 @@ function read(uploadDir, upload) {
   return fs.readFileSync(file);
 }
 
-function extractUpload(uploadDir, upload) {
+// OCR results are cached next to the file (<sha256>.ocr.json) so re-analysing
+// (changing the register or column mapping) doesn't re-run OCR.
+async function extractUpload(uploadDir, upload) {
+  const cacheFile = path.join(uploadDir, `${upload.sha256}.ocr.json`);
+  const cache = {
+    get() { try { return JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch { return null; } },
+    set(v) { try { fs.writeFileSync(cacheFile, JSON.stringify(v)); } catch { /* cache is optional */ } },
+  };
   try {
-    return extract(upload.filename, read(uploadDir, upload));
+    return await extractFull(upload.filename, read(uploadDir, upload), { cache });
   } catch (err) {
     if (err instanceof HttpError) throw err;
     throw new HttpError(422, `could not read ${upload.filename}: ${err.message}`);
@@ -51,7 +58,10 @@ function remove(db, uploadDir, id) {
   const u = get(db, id);
   db.prepare('DELETE FROM uploads WHERE id = ?').run(u.id);
   const others = db.prepare('SELECT COUNT(*) AS n FROM uploads WHERE sha256 = ?').get(u.sha256).n;
-  if (!others) fs.rmSync(path.join(uploadDir, u.sha256), { force: true });
+  if (!others) {
+    fs.rmSync(path.join(uploadDir, u.sha256), { force: true });
+    fs.rmSync(path.join(uploadDir, `${u.sha256}.ocr.json`), { force: true });
+  }
 }
 
 module.exports = { store, get, list, read, extractUpload, remove };

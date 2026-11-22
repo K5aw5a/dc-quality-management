@@ -136,7 +136,7 @@ function createApp({
         let analysis = null;
         if (tab !== 'evidence') {
           try {
-            analysis = importer.analyse(db, uploads.extractUpload(uploadDir, upload), { tab, filename: upload.filename });
+            analysis = importer.analyse(db, await uploads.extractUpload(uploadDir, upload), { tab, filename: upload.filename });
             db.prepare("UPDATE uploads SET status = 'analysed', tab = COALESCE(tab, ?) WHERE id = ?").run(analysis.tab, upload.id);
           } catch (err) {
             if (!(err instanceof HttpError)) throw err;
@@ -165,13 +165,13 @@ function createApp({
     if (action === 'file' && method === 'GET') return sendFile(res, uploads.read(uploadDir, upload), upload.filename);
     if (action === 'analyse' && method === 'POST') {
       const body = await readJson(req);
-      return send(res, 200, importer.analyse(db, uploads.extractUpload(uploadDir, upload), { ...body, filename: upload.filename }));
+      return send(res, 200, importer.analyse(db, await uploads.extractUpload(uploadDir, upload), { ...body, filename: upload.filename }));
     }
     if (action === 'import' && method === 'POST') {
       const body = await readJson(req);
       if (!body.tab) throw new HttpError(400, 'tab is required');
       resources.getTab(body.tab);
-      const extracted = body.mode === 'fields' ? null : uploads.extractUpload(uploadDir, upload);
+      const extracted = body.mode === 'fields' ? null : await uploads.extractUpload(uploadDir, upload);
       return send(res, 200, importer.commit(db, user, upload, extracted, body));
     }
     throw new HttpError(404, 'not found');
