@@ -3,22 +3,28 @@
 // Turns an extracted document into proposed records for a register.
 // Nothing is written until commit() is called with the (possibly user-edited)
 // mapping, so every import is previewed and approved by a person first.
+//
+// Column matching uses, in order: the document type's saved mapping (exact
+// headings), then each column's "headings that mean this" (aliases), its label
+// and key. Headings the user maps by hand are learned at import (settings.learn).
 
-const { TABS, ORDER } = require('./schema');
+const registry = require('./registry');
+const settings = require('./settings');
 const { norm, parseDate, parseNumber, parseBool, parseEnum } = require('./values');
 const R = require('./resources');
 
 const PREVIEW_ROWS = 300;
 const HEADER_SCAN_ROWS = 60;
 
-const aliasCache = new Map();
-function aliases(tabName, field) {
-  const k = tabName + '.' + field;
-  if (!aliasCache.has(k)) {
-    const def = TABS[tabName].fields[field];
-    aliasCache.set(k, [...new Set([norm(field.replace(/_/g, ' ')), norm(def.label), ...(def.aliases || []).map(norm)].filter(Boolean))]);
+const aliasCache = new WeakMap(); // tab definition → Map(field → normalised aliases)
+function aliases(T, field) {
+  let m = aliasCache.get(T);
+  if (!m) { m = new Map(); aliasCache.set(T, m); }
+  if (!m.has(field)) {
+    const def = T.fields[field];
+    m.set(field, [...new Set([norm(field.replace(/_/g, ' ')), norm(def.label), ...(def.aliases || []).map(norm)].filter(Boolean))]);
   }
-  return aliasCache.get(k);
+  return m.get(field);
 }
 
 // How well a heading/label matches a field: 1 = exact synonym, ~0.75 = contains it.
@@ -31,19 +37,24 @@ function matchScore(heading, list) {
     if (h === a) s = 1;
     else if (a.length >= 4 && h.replace(/ /g, '') === a.replace(/ /g, '')) s = 0.95; // OCR often drops spaces ("NCRNo")
     else if (a.length >= 3 && ` ${h} `.includes(` ${a} `)) s = 0.75;
-    else if (h.length >= 3 && a.length >= 3 && ` ${a} `.includes(` ${h} `) && h.split(' ').length >= 1 && h.length >= a.length / 2) s = 0.6;
+    else if (h.length >= 3 && a.length >= 3 && ` ${a} `.includes(` ${h} `) && h.length >= a.length / 2) s = 0.6;
     if (s) s += a.length / 1000; // prefer the more specific synonym
     if (s > best) best = s;
   }
   return best;
 }
 
-function mapHeaders(tabName, headers) {
-  const tab = TABS[tabName];
+// docMap: a document type's saved mapping { normalised heading: field | '' (ignore) }
+function mapHeaders(T, headers, docMap = {}) {
   const cands = [];
+  const forced = headers.map((h) => (Object.hasOwn(docMap, norm(h)) ? docMap[norm(h)] : undefined));
   headers.forEach((h, i) => {
-    for (const f of Object.keys(tab.fields)) {
-      const s = matchScore(h, aliases(tabName, f));
+    if (forced[i] !== undefined) {
+      if (forced[i] && T.fields[forced[i]]) cands.push({ i, f: forced[i], s: 2 });
+      return;
+    }
+    for (const f of Object.keys(T.fields)) {
+      const s = matchScore(h, aliases(T, f));
       if (s > 0) cands.push({ i, f, s });
     }
   });
@@ -51,27 +62,26 @@ function mapHeaders(tabName, headers) {
   const mapping = headers.map(() => null); const used = new Set(); let total = 0;
   for (const c of cands) {
     if (mapping[c.i] || used.has(c.f)) continue;
-    mapping[c.i] = c.f; used.add(c.f); total += c.s;
+    mapping[c.i] = c.f; used.add(c.f); total += Math.min(c.s, 1);
   }
   return { mapping, total, matched: used.size };
 }
 
-function scoreHeader(tabName, cells) {
+function scoreHeader(T, cells, docMap) {
   const nonEmpty = cells.filter((c) => String(c ?? '').trim()).length;
   if (nonEmpty < 2) return null;
-  const m = mapHeaders(tabName, cells.map((c) => String(c ?? '')));
+  const m = mapHeaders(T, cells.map((c) => String(c ?? '')), docMap);
   if (m.matched < 2) return null;
-  const tab = TABS[tabName];
-  const keyHit = tab.key.some((k) => m.mapping.includes(k));
-  const reqHit = Object.entries(tab.fields).filter(([f, d]) => d.required && m.mapping.includes(f)).length;
+  const keyHit = T.key.some((k) => m.mapping.includes(k));
+  const reqHit = Object.entries(T.fields).filter(([f, d]) => d.required && m.mapping.includes(f)).length;
   return { ...m, score: m.total + (keyHit ? 1 : 0) + reqHit * 0.5, keyHit };
 }
 
-function findHeader(tabName, table) {
+function findHeader(T, table, docMap) {
   let best = null;
   const limit = Math.min(table.rows.length, table.layout ? 400 : HEADER_SCAN_ROWS);
   for (let r = 0; r < limit; r++) {
-    const s = scoreHeader(tabName, table.rows[r] || []);
+    const s = scoreHeader(T, table.rows[r] || [], docMap);
     if (s && (!best || s.score > best.score)) best = { ...s, row: r };
   }
   return best;
@@ -82,7 +92,7 @@ function dataRows(table, headerRow, keyCols) {
   if (!table.layout) {
     return table.rows.slice(headerRow + 1).map((cells, i) => ({ line: headerRow + i + 2, cells }));
   }
-  // PDF: re-split each line by the header's column positions, and fold
+  // PDF/OCR: re-split each line by the header's column positions, and fold
   // wrapped lines (no value in the key column) into the row above.
   const head = table.layout[headerRow];
   // A column starts just left of its heading (table text is usually left-aligned
@@ -116,8 +126,8 @@ function dataRows(table, headerRow, keyCols) {
 }
 
 // Convert one cell to the field's type. Returns { value } or { warning }.
-function convert(tabName, field, raw) {
-  const def = TABS[tabName].fields[field];
+function convert(T, field, raw) {
+  const def = T.fields[field];
   if (raw === null || raw === undefined || String(raw).trim() === '') return { value: null };
   let value;
   // Typical OCR confusions inside dates/numbers: O→0, l/I/|→1, S→5, B→8, spaces around separators.
@@ -135,7 +145,7 @@ function convert(tabName, field, raw) {
     case 'bool': value = parseBool(raw); if (!value) return { warning: `${def.label}: "${raw}" is not yes/no` }; break;
     case 'enum': {
       const r = parseEnum(def, raw);
-      if (!r.value) return { warning: `${def.label}: "${raw}" not recognised${def.default ? `, left as ${def.default.replace(/_/g, ' ')}` : ''}` };
+      if (!r.value) return { warning: `${def.label}: "${raw}" not recognised${def.default ? `, left as ${def.labels?.[def.default] || def.default}` : ''}` };
       value = r.value; break;
     }
     default: value = typeof raw === 'number' ? String(raw) : String(raw).replace(/\s+/g, ' ').trim();
@@ -143,26 +153,25 @@ function convert(tabName, field, raw) {
   try { return { value: R.validateValue(field, { ...def, required: false }, value) }; } catch (err) { return { warning: err.message }; }
 }
 
-const keyOf = (tab, values) => {
-  const parts = tab.key.map((k) => norm(values[k] ?? ''));
+const keyOf = (T, values) => {
+  const parts = T.key.map((k) => norm(values[k] ?? ''));
   return parts.every((p) => !p) ? null : parts.join('|');
 };
 
 // Decide create / update / unchanged / skip for each proposed record.
-function plan(db, tabName, proposals) {
-  const tab = TABS[tabName];
+function plan(db, T, proposals) {
   const existing = new Map();
-  for (const row of db.prepare(`SELECT * FROM ${tabName}`).all()) {
-    const k = keyOf(tab, row);
+  for (const row of db.prepare(`SELECT * FROM ${T.name}`).all()) {
+    const k = keyOf(T, row);
     if (k && !existing.has(k)) existing.set(k, row);
   }
   const seen = new Map();
   const counts = { create: 0, update: 0, unchanged: 0, skip: 0 };
   const rows = proposals.map((p) => {
     const r = { ...p, warnings: [...(p.warnings || [])] };
-    const k = keyOf(tab, r.values);
+    const k = keyOf(T, r.values);
     if (k && seen.has(k)) {
-      r.action = 'skip'; r.warnings.push(`same ${tab.key.map((f) => tab.fields[f].label).join(' + ')} as row ${seen.get(k)} in this file`);
+      r.action = 'skip'; r.warnings.push(`same ${T.key.map((f) => T.fields[f].label).join(' + ')} as row ${seen.get(k)} in this file`);
     } else if (k && existing.has(k)) {
       const cur = existing.get(k);
       const changes = {};
@@ -170,7 +179,7 @@ function plan(db, tabName, proposals) {
       r.id = cur.id; r.version = cur.version; r.changes = changes;
       r.action = Object.keys(changes).length ? 'update' : 'unchanged';
     } else {
-      const missing = Object.entries(tab.fields).filter(([f, d]) => d.required && (r.values[f] === null || r.values[f] === undefined)).map(([, d]) => d.label);
+      const missing = Object.entries(T.fields).filter(([f, d]) => d.required && (r.values[f] === null || r.values[f] === undefined)).map(([, d]) => d.label);
       if (missing.length) { r.action = 'skip'; r.warnings.push(`missing ${missing.join(', ')}`); }
       else r.action = 'create';
     }
@@ -182,11 +191,12 @@ function plan(db, tabName, proposals) {
   return { rows, counts };
 }
 
-function keywordBonus(tabName, filename, text) {
+function keywordHit(keywords, filename, text) {
   const f = ` ${norm(filename)} `; const t = ` ${norm(String(text || '').slice(0, 4000))} `;
   let b = 0;
-  for (const kw of TABS[tabName].keywords || []) {
+  for (const kw of keywords || []) {
     const k = norm(kw);
+    if (!k) continue;
     if (f.includes(` ${k} `) || f.includes(` ${k}`)) b = Math.max(b, 1.5);
     else if (t.includes(` ${k} `)) b = Math.max(b, 0.5);
   }
@@ -210,124 +220,166 @@ function labelPairs(extracted) {
   return [...colon, ...cells];
 }
 
-function readFields(tabName, extracted) {
-  const tab = TABS[tabName];
+function readFields(T, extracted, docMap = {}) {
   const raw = {}; const found = {};
   for (const [label, value] of labelPairs(extracted)) {
+    const forced = docMap[norm(label)];
     let best = null; let bestScore = 0.74;
-    for (const f of Object.keys(tab.fields)) {
-      if (raw[f] !== undefined) continue;
-      const s = matchScore(label, aliases(tabName, f));
-      if (s > bestScore) { best = f; bestScore = s; }
+    if (forced !== undefined) { if (forced && T.fields[forced] && raw[forced] === undefined) best = forced; }
+    else {
+      for (const f of Object.keys(T.fields)) {
+        if (raw[f] !== undefined) continue;
+        const s = matchScore(label, aliases(T, f));
+        if (s > bestScore) { best = f; bestScore = s; }
+      }
     }
     if (best && String(value).trim()) { raw[best] = value; found[best] = label.trim(); }
   }
   const text = extracted.text || '';
-  const keyField = tab.key[0];
-  if (raw[keyField] === undefined && tab.keyPattern) {
-    const m = tab.keyPattern.exec(text);
+  const keyField = T.key[0];
+  if (raw[keyField] === undefined && T.keyPattern) {
+    const m = T.keyPattern.exec(text);
     if (m) { raw[keyField] = m[0]; found[keyField] = 'pattern in text'; }
   }
-  if (tab.fields.revision && raw.revision === undefined) {
+  if (T.fields.revision && raw.revision === undefined) {
     const m = /\bRev(?:ision)?\.?\s*[:#-]?\s*([A-Z]?\d{1,2}[A-Z]?|[A-Z])\b/.exec(text);
     if (m) { raw.revision = m[1]; found.revision = 'pattern in text'; }
   }
-  const titleField = tab.display.find((f) => f !== keyField && tab.fields[f].required && raw[f] === undefined);
+  const titleField = T.display.find((f) => f !== keyField && T.fields[f]?.required && raw[f] === undefined);
   if (titleField) {
     const first = (extracted.lines || []).map((l) => l.cells.join(' ')).find((l) => l.length > 3 && l.length < 150 && !/[:：]/.test(l));
     if (first) { raw[titleField] = first; found[titleField] = 'first line of document'; }
   }
   const values = {}; const warnings = [];
   for (const [f, v] of Object.entries(raw)) {
-    const c = convert(tabName, f, v);
+    const c = convert(T, f, v);
     if (c.warning) warnings.push(c.warning); else values[f] = c.value;
   }
   return { values, found, warnings, matched: Object.keys(values).length };
 }
 
+/* ---------------- document types ---------------- */
+
+function pickDocType(db, opts, extracted) {
+  if (opts.docType) return settings.getDocType(db, opts.docType);
+  if (opts.tab && opts.tab !== 'auto') return null;
+  // auto: a document type whose keywords appear in the file name (or, weaker, in the text)
+  let best = null; let bestScore = 0;
+  for (const dt of settings.listDocTypes(db)) {
+    const s = keywordHit(dt.keywords, opts.filename, extracted.text);
+    if (s > bestScore) { best = dt; bestScore = s; }
+  }
+  return bestScore >= 1.5 ? best : null;
+}
+
 /* ---------------- public API ---------------- */
 
-// opts: { tab: 'auto'|tabName, mode, filename, table, headerRow, mapping, exclude: [line] }
+// opts: { tab: 'auto'|name, docType, mode, filename, table, headerRow, mapping, exclude: [line] }
 function analyseFull(db, extracted, opts = {}) {
-  const tabs = opts.tab && opts.tab !== 'auto' ? [opts.tab] : ORDER;
-  for (const t of tabs) R.getTab(t);
+  const reg = registry.load(db);
+  const docType = pickDocType(db, opts, extracted);
   const tables = extracted.tables || [];
-
-  // Score every (tab, table) pair.
-  const cands = [];
-  for (const t of tabs) {
-    const bonus = keywordBonus(t, opts.filename, extracted.text);
-    tables.forEach((table, ti) => {
-      const h = findHeader(t, table);
-      if (h) cands.push({ tab: t, table: ti, header: h, score: h.score + bonus });
-    });
-    if (!tables.length || ['pdf', 'docx', 'image'].includes(extracted.kind)) {
-      const f = readFields(t, extracted);
-      if (f.matched >= 2) cands.push({ tab: t, table: null, fields: f, score: f.matched * 0.6 + bonus });
-    }
-  }
-  cands.sort((a, b) => b.score - a.score);
-
-  const tabScores = [];
-  for (const c of cands) if (!tabScores.find((x) => x.tab === c.tab)) tabScores.push({ tab: c.tab, score: Math.round(c.score * 10) / 10 });
-
-  let chosen = cands[0] || null;
-  if (opts.tab && opts.tab !== 'auto' && Number.isInteger(opts.table) && tables[opts.table]) {
-    const table = tables[opts.table];
-    const row = Number.isInteger(opts.headerRow) ? opts.headerRow : findHeader(opts.tab, table)?.row;
-    if (row !== undefined && row !== null && table.rows[row]) {
-      chosen = { tab: opts.tab, table: opts.table, header: { row, ...mapHeaders(opts.tab, table.rows[row].map((c) => String(c ?? ''))) } };
-    }
-  } else if (opts.tab && opts.tab !== 'auto' && opts.mode === 'fields') {
-    chosen = cands.find((c) => c.table === null) || { tab: opts.tab, table: null, fields: readFields(opts.tab, extracted) };
-  }
-
   const base = {
     kind: extracted.kind,
     ocr: extracted.ocr || null,
     tables: tables.map((t, i) => ({ index: i, name: t.name, rows: t.rows.length })),
-    tabScores,
     excerpt: String(extracted.text || '').slice(0, 4000),
+    docType: docType ? { id: docType.id, name: docType.name, mode: docType.mode } : null,
   };
 
+  if (docType && docType.mode === 'evidence' && !(opts.tab && opts.tab !== 'auto' && opts.tab !== docType.register)) {
+    return { ...base, mode: 'evidence', tab: docType.register, tabScores: [], message: `Stored as evidence ("${docType.name}").` };
+  }
+
+  const wanted = opts.tab && opts.tab !== 'auto' ? opts.tab : docType?.register || null;
+  const names = wanted ? [wanted] : reg.order;
+  for (const t of names) R.getTab(db, t);
+  const docMap = docType && docType.register === (wanted || docType.register) ? docType.mapping : {};
+  const mode = opts.mode || (docType && docType.mode === 'fields' ? 'fields' : null);
+
+  // Score every (register, table) pair.
+  const cands = [];
+  for (const t of names) {
+    const T = reg.tabs[t];
+    const bonus = keywordHit(T.keywords, opts.filename, extracted.text);
+    if (mode !== 'fields') {
+      tables.forEach((table, ti) => {
+        const h = findHeader(T, table, docMap);
+        if (h) cands.push({ tab: t, table: ti, header: h, score: h.score + bonus });
+      });
+    }
+    if (mode === 'fields' || !tables.length || ['pdf', 'docx', 'image'].includes(extracted.kind)) {
+      const f = readFields(T, extracted, docMap);
+      if (f.matched >= (mode === 'fields' ? 1 : 2)) cands.push({ tab: t, table: null, fields: f, score: f.matched * 0.6 + bonus + (mode === 'fields' ? 10 : 0) });
+    }
+  }
+  cands.sort((a, b) => b.score - a.score);
+  base.tabScores = [];
+  for (const c of cands) if (!base.tabScores.find((x) => x.tab === c.tab)) base.tabScores.push({ tab: c.tab, score: Math.round(c.score * 10) / 10 });
+
+  let chosen = cands[0] || null;
+  if (wanted && mode !== 'fields' && Number.isInteger(opts.table) && tables[opts.table]) {
+    const table = tables[opts.table];
+    const T = reg.tabs[wanted];
+    const row = Number.isInteger(opts.headerRow) ? opts.headerRow : findHeader(T, table, docMap)?.row;
+    if (row !== undefined && row !== null && table.rows[row]) {
+      chosen = { tab: wanted, table: opts.table, header: { row, ...mapHeaders(T, (table.layout ? table.layout[row].cells.map((c) => c.text) : table.rows[row]).map((c) => String(c ?? '')), docMap) } };
+    }
+  } else if (wanted && mode === 'fields' && (!chosen || chosen.table !== null)) {
+    chosen = { tab: wanted, table: null, fields: readFields(reg.tabs[wanted], extracted, docMap) };
+  }
+
+  if (!chosen && wanted && mode !== 'fields' && tables.length) {
+    // The user picked the register but no heading is recognised yet: offer the
+    // biggest table with its first header-like row, so the columns can be mapped
+    // by hand (and learned at import).
+    const ti = tables.reduce((best, t, i) => (t.rows.length > tables[best].rows.length ? i : best), 0);
+    const rows = tables[ti].rows;
+    const row = rows.findIndex((r) => r.filter((c) => String(c ?? '').trim()).length >= 2);
+    if (row >= 0 && row < rows.length - 1) {
+      const T = reg.tabs[wanted];
+      const cells = (tables[ti].layout ? tables[ti].layout[row].cells.map((c) => c.text) : rows[row]).map((c) => String(c ?? ''));
+      chosen = { tab: wanted, table: ti, header: { row, ...mapHeaders(T, cells, docMap) }, unmatched: true };
+    }
+  }
+
   if (!chosen) {
-    const tab = opts.tab && opts.tab !== 'auto' ? opts.tab : null;
-    const f = tab ? readFields(tab, extracted) : null;
-    if (f && f.matched >= 1) chosen = { tab, table: null, fields: f };
+    const f = wanted ? readFields(reg.tabs[wanted], extracted, docMap) : null;
+    if (f && f.matched >= 1) chosen = { tab: wanted, table: null, fields: f };
     else {
       return {
-        ...base, mode: 'none', tab,
+        ...base, mode: 'none', tab: wanted,
         message: extracted.ocr && extracted.ocr.error && !(extracted.text || '').trim()
           ? `This looks like a scanned document, but OCR could not read it: ${extracted.ocr.error}. The file is stored as evidence.`
           : extracted.text && extracted.text.trim()
-          ? 'Could not find a register table or recognisable fields in this document. It is stored as evidence; check the excerpt below or pick another register.'
-          : 'No readable text was found. If this is a scanned PDF, it needs OCR first (or upload the original Excel/Word file). It is stored as evidence.',
+            ? 'Could not find a register table or recognisable fields in this document. It is stored as evidence. Pick a register or document type, check the text below, or teach the register the headings this document uses (Settings → Registers).'
+            : 'No readable text was found. If this is a scanned PDF, it needs OCR first (or upload the original Excel/Word file). It is stored as evidence.',
       };
     }
   }
 
+  const T = reg.tabs[chosen.tab];
   if (chosen.table === null) {
     const f = chosen.fields;
-    const p = plan(db, chosen.tab, [{ line: 1, values: f.values, warnings: f.warnings }]);
+    const p = plan(db, T, [{ line: 1, values: f.values, warnings: f.warnings }]);
     return { ...base, mode: 'fields', tab: chosen.tab, found: f.found, record: f.values, ...p };
   }
 
   const table = tables[chosen.table];
   const headerRow = chosen.header.row;
   const headers = (table.layout ? table.layout[headerRow].cells.map((c) => c.text) : table.rows[headerRow]).map((c) => String(c ?? '').trim());
-  let mapping = chosen.header.mapping.slice(0, headers.length);
-  while (mapping.length < headers.length) mapping.push(null);
+  const autoMapping = chosen.header.mapping.slice(0, headers.length);
+  while (autoMapping.length < headers.length) autoMapping.push(null);
+  let mapping = autoMapping;
   if (Array.isArray(opts.mapping)) {
-    const fields = TABS[chosen.tab].fields;
     const usedFields = new Set();
     mapping = headers.map((_, i) => {
       const f = opts.mapping[i];
-      if (!f || !Object.hasOwn(fields, f) || usedFields.has(f)) return null;
+      if (!f || !Object.hasOwn(T.fields, f) || usedFields.has(f)) return null;
       usedFields.add(f); return f;
     });
   }
-  const tab = TABS[chosen.tab];
-  const keyCols = tab.key.map((k) => mapping.indexOf(k)).filter((i) => i >= 0);
+  const keyCols = T.key.map((k) => mapping.indexOf(k)).filter((i) => i >= 0);
   const exclude = new Set(opts.exclude || []);
 
   const proposals = [];
@@ -336,16 +388,16 @@ function analyseFull(db, extracted, opts = {}) {
     const values = {}; const warnings = [];
     mapping.forEach((f, i) => {
       if (!f) return;
-      const c = convert(chosen.tab, f, cells[i]);
+      const c = convert(T, f, cells[i]);
       if (c.warning) warnings.push(c.warning);
       else if (c.value !== null) values[f] = c.value;
     });
     if (!Object.keys(values).length) continue;
     proposals.push({ line, values, warnings, excluded: exclude.has(line) });
   }
-  const p = plan(db, chosen.tab, proposals);
+  const p = plan(db, T, proposals);
   return {
-    ...base, mode: 'table', tab: chosen.tab, table: chosen.table, headerRow, headers, mapping,
+    ...base, mode: 'table', tab: chosen.tab, table: chosen.table, headerRow, headers, mapping, autoMapping, unmatched: !!chosen.unmatched,
     counts: p.counts, total: p.rows.length, rows: p.rows, // trimmed to PREVIEW_ROWS by analyse()
   };
 }
@@ -358,20 +410,20 @@ function analyse(db, extracted, opts = {}) {
 
 // Write the analysed rows. For 'fields' mode the client sends the edited record.
 function commit(db, user, upload, extracted, opts) {
-  let rows; let tabName;
+  let rows; let tabName; let a = null;
   if (opts.mode === 'fields') {
     tabName = opts.tab;
-    const tab = R.getTab(tabName);
+    const T = R.getTab(db, tabName);
     const values = {}; const warnings = [];
-    for (const f of Object.keys(tab.fields)) {
+    for (const f of Object.keys(T.fields)) {
       if (opts.record?.[f] === undefined) continue;
-      const c = convert(tabName, f, opts.record[f]);
+      const c = convert(T, f, opts.record[f]);
       if (c.warning) throw new R.HttpError(400, c.warning);
       values[f] = c.value;
     }
-    rows = plan(db, tabName, [{ line: 1, values, warnings }]).rows;
+    rows = plan(db, T, [{ line: 1, values, warnings }]).rows;
   } else {
-    const a = analyseFull(db, extracted, { ...opts, filename: upload.filename });
+    a = analyseFull(db, extracted, { ...opts, filename: upload.filename });
     if (a.mode !== 'table') throw new R.HttpError(400, 'nothing to import from this document as a table');
     tabName = a.tab;
     rows = a.rows;
@@ -384,7 +436,7 @@ function commit(db, user, upload, extracted, opts) {
         R.create(db, tabName, r.values, user, { sourceUploadId: upload.id, action: 'import' });
         result.created++;
       } else if (r.action === 'update') {
-        const current = R.strip(tabName, db.prepare(`SELECT * FROM ${tabName} WHERE id = ?`).get(r.id));
+        const current = R.strip(db, tabName, db.prepare(`SELECT * FROM ${tabName} WHERE id = ?`).get(r.id));
         const changes = {};
         for (const [f, v] of Object.entries(r.values)) if (v !== null && v !== current[f]) changes[f] = { from: current[f], to: v };
         R.applyUpdate(db, tabName, current, changes, user, { sourceUploadId: upload.id, action: 'import' });
@@ -392,9 +444,19 @@ function commit(db, user, upload, extracted, opts) {
       } else if (r.action === 'unchanged') result.unchanged++;
       else result.skipped++;
     }
-    db.prepare(`UPDATE uploads SET status = 'imported', tab = ?, summary = ?, imported_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
-      .run(tabName, JSON.stringify(result), upload.id);
+    const docTypeId = a?.docType?.id || (opts.docType ? Number(opts.docType) : null);
+    db.prepare(`UPDATE uploads SET status = 'imported', tab = ?, doc_type_id = COALESCE(?, doc_type_id), summary = ?, imported_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
+      .run(tabName, docTypeId, JSON.stringify(result), upload.id);
   });
+
+  // Learn from the user's column choices so the next file maps itself.
+  if (a) {
+    const T = R.getTab(db, tabName);
+    result.learned = settings.learn(db, {
+      register: tabName, docTypeId: a.docType?.id || null, headers: a.headers, mapping: a.mapping, autoMapping: a.autoMapping, user,
+      isKnown: (f, h) => matchScore(h, aliases(T, f)) >= 0.95,
+    });
+  }
   return result;
 }
 

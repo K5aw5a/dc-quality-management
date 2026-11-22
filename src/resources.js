@@ -1,6 +1,7 @@
 'use strict';
 
-const { TABS, computeRow } = require('./schema');
+const registry = require('./registry');
+const { daysBetween } = require('./schema');
 const { parseDate, parseNumber, parseBool, parseEnum } = require('./values');
 
 class HttpError extends Error {
@@ -57,21 +58,36 @@ function validateValue(field, def, value) {
   }
 }
 
-function getTab(name) {
-  if (!Object.hasOwn(TABS, name)) throw new HttpError(404, 'unknown register');
-  return TABS[name];
+function getTab(db, name) {
+  const { tabs } = registry.load(db);
+  if (!Object.hasOwn(tabs, name)) throw new HttpError(404, 'unknown register');
+  return tabs[name];
 }
 
 function context(db, name) {
   const ctx = { today: today() };
-  if (name === 'checklist') {
+  if (getTab(db, name).builtin === 'checklist') {
     ctx.evidence = new Map(db.prepare(`SELECT lower(checklist_ref) AS ref, COUNT(*) AS n FROM uploads
       WHERE checklist_ref IS NOT NULL GROUP BY lower(checklist_ref)`).all().map((r) => [r.ref, r.n]));
   }
   return ctx;
 }
 
-const withComputed = (name, rows, ctx) => rows.map((r) => ({ ...r, ...computeRow(name, r, ctx) }));
+// Computed columns, evaluated when records are read.
+function computeRow(tab, row, ctx) {
+  const out = {};
+  if (tab.age) {
+    const st = tab.statusField ? row[tab.statusField] : null;
+    const open = tab.age.statuses ? tab.age.statuses.includes(st) : !tab.done.includes(st);
+    const from = row[tab.age.from];
+    out.age_days = open && from ? Math.max(0, daysBetween(from, ctx.today)) : null;
+  }
+  if (tab.computed.remaining) out.remaining = row.delivered_qty != null ? row.delivered_qty - (row.installed_qty || 0) : null;
+  if (tab.computed.evidence_files) out.evidence_files = ctx.evidence?.get(String(row[tab.key[0]] ?? '').toLowerCase()) || 0;
+  return out;
+}
+
+const withComputed = (db, name, rows, ctx) => { const tab = getTab(db, name); return rows.map((r) => ({ ...r, ...computeRow(tab, r, ctx) })); };
 
 function logActivity(db, user, resource, recordId, action, changes) {
   db.prepare('INSERT INTO activity (username, resource, record_id, action, changes) VALUES (?, ?, ?, ?, ?)')
@@ -79,12 +95,12 @@ function logActivity(db, user, resource, recordId, action, changes) {
 }
 
 function all(db, name) {
-  getTab(name);
-  return withComputed(name, db.prepare(`SELECT * FROM ${name} ORDER BY id`).all(), context(db, name));
+  getTab(db, name);
+  return withComputed(db, name, db.prepare(`SELECT * FROM ${name} ORDER BY id`).all(), context(db, name));
 }
 
 function list(db, name, query) {
-  const tab = getTab(name);
+  const tab = getTab(db, name);
   const where = []; const params = [];
   for (const [field, def] of Object.entries(tab.fields)) {
     if (query.has(field) && ['enum', 'bool', 'date'].includes(def.type)) {
@@ -102,25 +118,25 @@ function list(db, name, query) {
   }
   const rows = db.prepare(`SELECT * FROM ${name} ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY id LIMIT 5000`).all(...params);
-  return withComputed(name, rows, context(db, name));
+  return withComputed(db, name, rows, context(db, name));
 }
 
 function get(db, name, id) {
-  getTab(name);
+  getTab(db, name);
   const row = db.prepare(`SELECT * FROM ${name} WHERE id = ?`).get(Number(id));
   if (!row) throw new HttpError(404, 'not found');
-  return withComputed(name, [row], context(db, name))[0];
+  return withComputed(db, name, [row], context(db, name))[0];
 }
 
-function strip(name, row) {
+function strip(db, name, row) {
   // drop computed columns before comparing/storing
   const out = { ...row };
-  for (const k of Object.keys(TABS[name].computed || {})) delete out[k];
+  for (const k of ['age_days', 'remaining', 'evidence_files']) delete out[k];
   return out;
 }
 
 function create(db, name, body, user, { sourceUploadId = null, action = 'create' } = {}) {
-  const tab = getTab(name);
+  const tab = getTab(db, name);
   const values = {};
   for (const [field, def] of Object.entries(tab.fields)) {
     const v = body[field] === undefined || body[field] === null || body[field] === '' ? def.default : body[field];
@@ -158,8 +174,8 @@ function applyUpdate(db, name, current, changes, user, { sourceUploadId, action 
   return changes;
 }
 
-function diff(name, current, body) {
-  const tab = getTab(name);
+function diff(db, name, current, body) {
+  const tab = getTab(db, name);
   const changes = {};
   for (const [field, def] of Object.entries(tab.fields)) {
     if (body[field] === undefined) continue;
@@ -174,17 +190,17 @@ function diff(name, current, body) {
 function update(db, name, id, body, user) {
   const version = Number(body.version);
   if (!Number.isInteger(version)) throw new HttpError(400, 'version is required');
-  const current = strip(name, get(db, name, id));
+  const current = strip(db, name, get(db, name, id));
   if (current.version !== version) {
     throw new HttpError(409, 'this record was changed by someone else; reload and try again', { current });
   }
-  const changes = diff(name, current, body);
+  const changes = diff(db, name, current, body);
   if (Object.keys(changes).length) tx(db, () => applyUpdate(db, name, current, changes, user));
   return get(db, name, id);
 }
 
 function remove(db, name, id, user) {
-  const current = strip(name, get(db, name, id));
+  const current = strip(db, name, get(db, name, id));
   tx(db, () => {
     db.prepare(`DELETE FROM ${name} WHERE id = ?`).run(current.id);
     logActivity(db, user, name, current.id, 'delete', current);
@@ -201,6 +217,6 @@ function activity(db, query) {
 }
 
 module.exports = {
-  HttpError, today, validateValue, getTab, list, all, get, strip, create, createOne,
+  HttpError, today, validateValue, getTab, list, all, get, strip, create, createOne, logActivity,
   applyUpdate, diff, update, remove, activity, tx,
 };

@@ -71,7 +71,7 @@ test('submittal CRUD with defaults, lenient dates and computed days in review', 
   assert.equal(created.status, 201, JSON.stringify(created.body));
   assert.equal(created.body.date_submitted, '2026-01-01');
   assert.equal(created.body.version, 1);
-  assert.ok(created.body.days_in_review > 0);
+  assert.ok(created.body.age_days > 0); // "Days in review" age rule
 
   const filtered = await t.call('/api/submittals?gc_status=under_review&q=UPS', { cookie });
   assert.equal(filtered.body.items.length, 1);

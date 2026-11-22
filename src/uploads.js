@@ -7,7 +7,7 @@ const { extractFull, kindOf } = require('./parsers');
 const { HttpError } = require('./resources');
 
 // Files are stored by content hash in uploadDir (outside git, next to the DB).
-function store(db, uploadDir, { filename, buf, tab, checklistRef, user }) {
+function store(db, uploadDir, { filename, buf, tab, checklistRef, docTypeId = null, user }) {
   filename = path.basename(String(filename || '').replace(/\\/g, '/')).slice(0, 200) || 'upload';
   let kind;
   try { kind = kindOf(filename, buf); } catch (err) { throw new HttpError(400, err.message); }
@@ -16,8 +16,8 @@ function store(db, uploadDir, { filename, buf, tab, checklistRef, user }) {
   const file = path.join(uploadDir, sha256);
   if (!fs.existsSync(file)) fs.writeFileSync(file, buf);
   const previous = db.prepare('SELECT id, filename, created_at FROM uploads WHERE sha256 = ? ORDER BY id DESC').get(sha256) || null;
-  const info = db.prepare(`INSERT INTO uploads (filename, kind, size, sha256, tab, checklist_ref, status, uploaded_by)
-    VALUES (?, ?, ?, ?, ?, ?, 'stored', ?)`).run(filename, kind, buf.length, sha256, tab || null, checklistRef || null, user.username);
+  const info = db.prepare(`INSERT INTO uploads (filename, kind, size, sha256, tab, checklist_ref, doc_type_id, status, uploaded_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'stored', ?)`).run(filename, kind, buf.length, sha256, tab || null, checklistRef || null, docTypeId, user.username);
   return { upload: get(db, Number(info.lastInsertRowid)), previous };
 }
 

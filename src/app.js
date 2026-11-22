@@ -10,7 +10,8 @@ const uploads = require('./uploads');
 const importer = require('./importer');
 const { dashboard } = require('./dashboard');
 const { writeXlsx } = require('./parsers/xlsx');
-const { TABS, ORDER } = require('./schema');
+const registry = require('./registry');
+const settings = require('./settings');
 
 const { HttpError } = resources;
 const MAX_JSON = 1024 * 1024;
@@ -26,13 +27,15 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'",
 };
 
-// Schema as sent to the browser (no regexes / server-only parts).
-const PUBLIC_SCHEMA = JSON.parse(JSON.stringify(
-  Object.fromEntries(ORDER.map((t) => {
-    const { keyPattern, keywords, ...rest } = TABS[t];
-    return [t, rest];
-  })),
-));
+// Registers as sent to the browser (no regexes / server-only parts).
+function publicSchema(db) {
+  const { tabs, order } = registry.load(db);
+  return {
+    tabs: Object.fromEntries(order.map((t) => { const { keyPattern, ...rest } = tabs[t]; return [t, rest]; })),
+    order,
+    docTypes: settings.listDocTypes(db).map(({ id, name, description, register, mode, checklist_ref }) => ({ id, name, description, register, mode, checklist_ref })),
+  };
+}
 
 function send(res, status, body, headers = {}) {
   const payload = body === undefined ? '' : JSON.stringify(body);
@@ -97,7 +100,7 @@ function serveStatic(publicDir, pathname, res) {
 }
 
 function exportSheet(db, tabName, { empty = false } = {}) {
-  const tab = TABS[tabName];
+  const tab = resources.getTab(db, tabName);
   const cols = [
     ...Object.entries(tab.fields).map(([f, d]) => ({ key: f, header: d.label, type: d.type })),
     ...(empty ? [] : Object.entries(tab.computed || {}).map(([f, d]) => ({ key: f, header: d.label, type: d.type }))),
@@ -124,20 +127,24 @@ function createApp({
       if (method === 'GET') return send(res, 200, { items: uploads.list(db) });
       if (method === 'POST') {
         if (!String(req.headers['content-type'] || '').startsWith('application/octet-stream')) throw new HttpError(415, 'expected application/octet-stream');
-        const tab = url.searchParams.get('tab') || 'auto';
-        if (tab !== 'auto' && tab !== 'evidence') resources.getTab(tab);
+        let tab = url.searchParams.get('tab') || 'auto';
+        const docType = url.searchParams.get('doc_type') ? settings.getDocType(db, url.searchParams.get('doc_type')) : null;
+        if (docType) tab = docType.mode === 'evidence' ? 'evidence' : docType.register;
+        if (tab !== 'auto' && tab !== 'evidence') resources.getTab(db, tab);
         const buf = await readBody(req, MAX_UPLOAD);
         if (!buf.length) throw new HttpError(400, 'empty file');
         const { upload, previous } = uploads.store(db, uploadDir, {
           filename: url.searchParams.get('filename'), buf, user,
-          tab: tab === 'auto' ? null : tab,
-          checklistRef: (url.searchParams.get('checklist_ref') || '').slice(0, 32) || null,
+          tab: tab === 'auto' || tab === 'evidence' ? docType?.register || null : tab,
+          docTypeId: docType?.id || null,
+          checklistRef: (url.searchParams.get('checklist_ref') || '').slice(0, 32) || docType?.checklist_ref || null,
         });
         let analysis = null;
         if (tab !== 'evidence') {
           try {
-            analysis = importer.analyse(db, await uploads.extractUpload(uploadDir, upload), { tab, filename: upload.filename });
-            db.prepare("UPDATE uploads SET status = 'analysed', tab = COALESCE(tab, ?) WHERE id = ?").run(analysis.tab, upload.id);
+            analysis = importer.analyse(db, await uploads.extractUpload(uploadDir, upload), { tab, docType: docType?.id, filename: upload.filename });
+            db.prepare(`UPDATE uploads SET status = ?, tab = COALESCE(tab, ?), doc_type_id = COALESCE(doc_type_id, ?) WHERE id = ?`)
+              .run(analysis.mode === 'evidence' ? 'stored' : 'analysed', analysis.tab, analysis.docType?.id || null, upload.id);
           } catch (err) {
             if (!(err instanceof HttpError)) throw err;
             db.prepare("UPDATE uploads SET status = 'failed', summary = ? WHERE id = ?").run(JSON.stringify({ error: err.message }), upload.id);
@@ -170,9 +177,32 @@ function createApp({
     if (action === 'import' && method === 'POST') {
       const body = await readJson(req);
       if (!body.tab) throw new HttpError(400, 'tab is required');
-      resources.getTab(body.tab);
+      resources.getTab(db, body.tab);
       const extracted = body.mode === 'fields' ? null : await uploads.extractUpload(uploadDir, upload);
       return send(res, 200, importer.commit(db, user, upload, extracted, body));
+    }
+    throw new HttpError(404, 'not found');
+  }
+
+  // Register and document-type editing. Reading is open to all users; changes are admin-only.
+  async function handleSettings(req, res, parts, user) {
+    const method = req.method;
+    const [kind, id, action] = parts;
+    const admin = () => { if (user.role !== 'admin') throw new HttpError(403, 'only admins can change registers and document types'); };
+    if (kind === 'registers') {
+      if (!id && method === 'GET') return send(res, 200, { items: settings.listRegisters(db) });
+      if (!id && method === 'POST') { admin(); return send(res, 201, settings.createRegister(db, await readJson(req), user)); }
+      if (id && !action && method === 'GET') return send(res, 200, settings.getRegister(db, id));
+      if (id && !action && method === 'PUT') { admin(); return send(res, 200, settings.updateRegister(db, id, await readJson(req), user)); }
+      if (id && action === 'archive' && method === 'POST') { admin(); const b = await readJson(req); return send(res, 200, settings.archiveRegister(db, id, b.archived !== false, user)); }
+    } else {
+      if (!id && method === 'GET') return send(res, 200, { items: settings.listDocTypes(db) });
+      if (!id && method === 'POST') { admin(); return send(res, 201, settings.createDocType(db, await readJson(req), user)); }
+      if (id && /^\d+$/.test(id)) {
+        if (method === 'GET') return send(res, 200, settings.getDocType(db, id));
+        if (method === 'PUT') { admin(); return send(res, 200, settings.updateDocType(db, id, await readJson(req), user)); }
+        if (method === 'DELETE') { admin(); settings.deleteDocType(db, id, user); return send(res, 204); }
+      }
     }
     throw new HttpError(404, 'not found');
   }
@@ -208,23 +238,24 @@ function createApp({
 
     if (method === 'GET' && parts.length === 1) {
       if (parts[0] === 'me') return send(res, 200, { user, project: projectName });
-      if (parts[0] === 'schema') return send(res, 200, { tabs: PUBLIC_SCHEMA, order: ORDER });
+      if (parts[0] === 'schema') return send(res, 200, publicSchema(db));
       if (parts[0] === 'dashboard') return send(res, 200, dashboard(db));
       if (parts[0] === 'activity') return send(res, 200, { items: resources.activity(db, url.searchParams) });
       if (parts[0] === 'export.xlsx') {
         const stamp = resources.today();
-        return sendFile(res, writeXlsx(ORDER.map((t) => exportSheet(db, t))), `quality-registers-${stamp}.xlsx`,
+        return sendFile(res, writeXlsx(registry.load(db).order.map((t) => exportSheet(db, t))), `quality-registers-${stamp}.xlsx`,
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       }
     }
     if (parts[0] === 'uploads') return handleUploads(req, res, url, parts, user);
+    if (parts[0] === 'registers' || parts[0] === 'doctypes') return handleSettings(req, res, parts, user);
 
     const [name, id] = parts;
     if (!name || parts.length > 2) throw new HttpError(404, 'not found');
     if (id === 'export.xlsx' || id === 'template.xlsx') {
-      resources.getTab(name);
+      const T = resources.getTab(db, name);
       const empty = id === 'template.xlsx';
-      const fname = `${TABS[name].label.replace(/[^\w]+/g, '-').toLowerCase()}${empty ? '-template' : `-${resources.today()}`}.xlsx`;
+      const fname = `${T.label.replace(/[^\w]+/g, '-').toLowerCase()}${empty ? '-template' : `-${resources.today()}`}.xlsx`;
       return sendFile(res, writeXlsx([exportSheet(db, name, { empty })]), fname,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }

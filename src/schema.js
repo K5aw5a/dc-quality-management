@@ -1,8 +1,9 @@
 'use strict';
 
-// Single source of truth for every register (tab). Tables, validation, the
-// import column-matching, the dashboard rules and the UI are all driven from
-// here, so adding a column or a register is a change in this one file.
+// The STARTING set of registers. On first start these are copied into the
+// database (table `registers`), where they are edited in the app (Settings →
+// Registers); see src/registry.js. Changing this file does not change an
+// existing installation's registers.
 //
 // Field options:
 //   type      string | text | enum | date | number | bool | url
@@ -378,25 +379,6 @@ const SOURCES_SEED = [
   ['Programmer clarifications log', 'need', 'Emails and chats', 'RFIs / scope', 'no'],
 ];
 
-// Computed columns, evaluated when records are read.
-function computeRow(tab, row, ctx) {
-  const t = ctx.today;
-  switch (tab) {
-    case 'checklist':
-      return { evidence_files: ctx.evidence?.get(String(row.ref).toLowerCase()) || 0 };
-    case 'submittals': {
-      const open = ['submitted', 'under_review'].includes(row.gc_status);
-      return { days_in_review: open && row.date_submitted ? Math.max(0, daysBetween(row.date_submitted, t)) : null };
-    }
-    case 'materials':
-      return { remaining: row.delivered_qty != null ? row.delivered_qty - (row.installed_qty || 0) : null };
-    case 'issues':
-      return { age_days: !TABS.issues.done.includes(row.status) && row.raised_date ? Math.max(0, daysBetween(row.raised_date, t)) : null };
-    default:
-      return {};
-  }
-}
-
 const ORDER = Object.keys(TABS);
 
-module.exports = { TABS, ORDER, SOURCES_SEED, computeRow, daysBetween };
+module.exports = { TABS, ORDER, SOURCES_SEED, daysBetween };

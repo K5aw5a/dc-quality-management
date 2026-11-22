@@ -3,7 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
-const { TABS, ORDER, SOURCES_SEED } = require('./schema');
+const { SOURCES_SEED } = require('./schema');
+const registry = require('./registry');
 
 // Migrations are append-only. Each runs once, tracked by PRAGMA user_version.
 // Register tables themselves are created/extended by syncTables() from schema.js.
@@ -63,43 +64,86 @@ const MIGRATIONS = [
       CREATE INDEX uploads_ref ON uploads(checklist_ref);
     `);
   },
+  // 3: registers and document types become editable data
+  (db) => {
+    db.exec(`
+      CREATE TABLE registers (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        builtin TEXT,
+        def TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_by TEXT,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE TABLE doc_types (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        description TEXT,
+        register TEXT,
+        mode TEXT NOT NULL DEFAULT 'table' CHECK (mode IN ('table', 'fields', 'evidence')),
+        keywords TEXT NOT NULL DEFAULT '[]',
+        mapping TEXT NOT NULL DEFAULT '{}',
+        checklist_ref TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_by TEXT,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      ALTER TABLE uploads ADD COLUMN doc_type_id INTEGER REFERENCES doc_types(id) ON DELETE SET NULL;
+    `);
+    const ins = db.prepare('INSERT INTO registers (name, builtin, def, position, updated_by) VALUES (?, ?, ?, ?, ?)');
+    for (const r of registry.defaultDefs()) ins.run(r.name, r.builtin, JSON.stringify(r.def), r.position, 'system');
+    const dt = db.prepare('INSERT INTO doc_types (name, description, register, mode, keywords, updated_by) VALUES (?, ?, ?, ?, ?, ?)');
+    for (const [name, desc, reg, mode, kw] of DOC_TYPE_SEED) dt.run(name, desc, reg, mode, JSON.stringify(kw), 'system');
+  },
+];
+
+// Starter document types (generic; edit in the app).
+const DOC_TYPE_SEED = [
+  ['Audit checklist workbook', 'The audit readiness checklist (Excel).', 'checklist', 'table', ['audit checklist', 'readiness checklist']],
+  ['Submittal register export', 'Submittal log exported from ACC or the GC.', 'submittals', 'table', ['submittal register', 'submittal log', 'transmittal log']],
+  ['Issues / NCR export', 'Issues, snags or NCR list exported from ACC.', 'issues', 'table', ['issues export', 'ncr log', 'snag list', 'issues report']],
+  ['NCR form', 'A single non-conformance report.', 'issues', 'fields', ['ncr form', 'non conformance report']],
+  ['Calibration certificate', 'One certificate for one instrument.', 'calibration', 'fields', ['calibration certificate', 'cal cert', 'certificate of calibration']],
+  ['Procedure / reference document', 'Procedures, presentations and method statements, stored as evidence.', null, 'evidence', ['procedure', 'method statement', 'presentation', 'process']],
 ];
 
 function sqlType(def) {
   return def.type === 'number' ? 'REAL' : 'TEXT';
 }
 
-// Additive schema sync: create missing register tables and add missing columns.
-// Never drops or changes existing columns.
+// Additive schema sync: create missing register tables and add missing columns
+// (from the stored register definitions). Never drops or changes existing columns.
 function syncTables(db) {
   const created = [];
-  for (const name of ORDER) {
-    const fields = TABS[name].fields;
-    const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
-    if (!exists) {
-      const cols = Object.entries(fields).map(([f, d]) => `${f} ${sqlType(d)}`);
+  const exists = (t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+  for (const r of db.prepare('SELECT name, builtin, def FROM registers').all()) {
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(r.name)) continue; // never build SQL from an unsafe name
+    const cols = JSON.parse(r.def).columns.filter((c) => /^[a-z][a-z0-9_]{0,62}$/.test(c.key));
+    if (!exists(r.name)) {
       db.exec(`
-        CREATE TABLE ${name} (
+        CREATE TABLE ${r.name} (
           id INTEGER PRIMARY KEY,
-          ${cols.join(',\n          ')},
+          ${cols.map((c) => `${c.key} ${sqlType(c)}`).join(',\n          ')}${cols.length ? ',' : ''}
           source_upload_id INTEGER REFERENCES uploads(id) ON DELETE SET NULL,
           version INTEGER NOT NULL DEFAULT 1,
           created_by TEXT,
           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
           updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         )`);
-      created.push(name);
+      created.push(r.builtin || r.name);
     } else {
-      const have = new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
-      for (const [f, d] of Object.entries(fields)) {
-        if (!have.has(f)) db.exec(`ALTER TABLE ${name} ADD COLUMN ${f} ${sqlType(d)}`);
-      }
+      const have = new Set(db.prepare(`PRAGMA table_info(${r.name})`).all().map((c) => c.name));
+      for (const c of cols) if (!have.has(c.key)) db.exec(`ALTER TABLE ${r.name} ADD COLUMN ${c.key} ${sqlType(c)}`);
     }
   }
   if (created.includes('sources')) {
     const ins = db.prepare('INSERT INTO sources (register, status, location, audit_areas, needed_for_audit, created_by) VALUES (?, ?, ?, ?, ?, ?)');
     for (const row of SOURCES_SEED) ins.run(...row, 'system');
   }
+  registry.invalidate(db);
 }
 
 function openDb(file) {
@@ -128,4 +172,4 @@ function migrate(db) {
   try { syncTables(db); db.exec('COMMIT'); } catch (err) { db.exec('ROLLBACK'); throw err; }
 }
 
-module.exports = { openDb };
+module.exports = { openDb, syncTables };
