@@ -1,6 +1,9 @@
 'use strict';
 
 const path = require('node:path');
+const { loadLocalEnv, defaultDbPath } = require('./config');
+
+const settingsFile = loadLocalEnv(); // local.env in the app folder, if present
 const { openDb } = require('./db');
 const { createApp } = require('./app');
 const { createUser } = require('./auth');
@@ -8,7 +11,8 @@ const { detectEngine } = require('./ocr');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
-const DB_PATH = process.env.DB_PATH || './data/qm.db';
+const DB_PATH = process.env.DB_PATH || defaultDbPath();
+if (settingsFile) console.log(`Settings read from ${settingsFile}`);
 
 const db = openDb(DB_PATH);
 

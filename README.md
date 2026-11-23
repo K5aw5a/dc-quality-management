@@ -70,36 +70,43 @@ All of them can be edited, renamed or archived.
 - Company look: navy top bar, optional company logo, and Light / Dark / Auto per person.
 - Sign-in for every user, admin and member roles, and protection against two people overwriting each other's edits.
 
-## Getting started (Windows / PowerShell)
+## Getting started (Windows)
 
-You need Node.js 22.13 or newer (`node -v`). In the app folder:
+You need Node.js 22.13 or newer (`node -v`).
 
+1. **First time only:** create your admin account. In PowerShell, in the app folder:
+   ```powershell
+   $env:ADMIN_USER = "admin"; $env:ADMIN_PASSWORD = "at-least-10-characters"; npm.cmd start
+   ```
+   Then stop it with `Ctrl+C`.
+2. **Every day:** double-click **`start.cmd`** in the app folder. It starts the app and opens http://127.0.0.1:3000 in your browser. Keep its window open while you work; close it to stop the app. Tip: right-click `start.cmd` → *Send to* → *Desktop (create shortcut)*.
+3. **Your settings** (project name, logo, OCR language…) go in **`local.env`** in the app folder. `start.cmd` creates it from `local.env.example` the first time; open it in Notepad and edit, e.g.:
+   ```
+   PROJECT_NAME=My project
+   LOGO_FILE=%USERPROFILE%\Pictures\logo.png
+   ```
+   `local.env` stays on your computer and is never uploaded to GitHub.
+
+The database is stored in `%LOCALAPPDATA%\dc-quality\qm.db` by default (outside OneDrive, which can corrupt a live database file), and uploaded files in an `uploads` folder next to it.
+
+**Updating the app:** only when there is a new version, run `git pull` in the app folder, then start it again.
+
+**Adding a teammate** (in PowerShell, in the app folder):
 ```powershell
-$env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"
-$env:PROJECT_NAME = "My project"
-$env:ADMIN_USER = "admin"; $env:ADMIN_PASSWORD = "at-least-10-characters"
-npm.cmd start
+$env:USER_PASSWORD = "a-long-password"; npm.cmd run create-user -- jane.doe
 ```
+Add `--admin` to make them an admin. To let the whole team use one copy, run it on a server (see `deploy/`).
 
-Open http://127.0.0.1:3000 and sign in. `ADMIN_USER` / `ADMIN_PASSWORD` are only needed the first time. After that:
-
-```powershell
-$env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"; npm.cmd start
-```
-
-- If PowerShell blocks `npm` ("running scripts is disabled"), use `npm.cmd` as shown.
-- Keep the database **outside OneDrive**: a synced database file can be corrupted. Uploaded files are stored in an `uploads` folder next to it.
-- To add a teammate:
-  ```powershell
-  $env:DB_PATH = "$env:LOCALAPPDATA\dc-quality\qm.db"; $env:USER_PASSWORD = "a-long-password"; npm.cmd run create-user -- jane.doe
-  ```
-  Add `--admin` to make them an admin. To let the whole team use one copy, run it on a server (see `deploy/`).
+If PowerShell refuses `npm` ("running scripts is disabled"), use `npm.cmd` as shown. `start.cmd` doesn't need PowerShell at all.
 
 ### Settings
 
+Put these in `local.env` (one `NAME=value` per line) or set them as environment variables; environment variables win.
+
+
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `DB_PATH` | `./data/qm.db` | where the database lives |
+| `DB_PATH` | `%LOCALAPPDATA%\\dc-quality\\qm.db` on Windows, `./data/qm.db` elsewhere | where the database lives |
 | `PROJECT_NAME` | Quality Management | name shown in the top bar |
 | `LOGO_FILE` | none | path to a local logo image (.png / .jpg / .svg) for the top bar and sign-in page |
 | `PORT` / `HOST` | 3000 / 127.0.0.1 | where the app listens |
@@ -145,6 +152,7 @@ src/uploads.js       file storage (by content hash, outside git)
 src/resources.js     validation, records, optimistic concurrency, activity log
 src/db.js            SQLite, migrations, additive table sync
 src/app.js           HTTP routes, security headers
+src/config.js        local.env loading and default paths
 public/              frontend (app.js, settings.js, audits.js, theme.js, styles.css)
 test/                node:test suite and synthetic fixtures
 deploy/              systemd, nginx, env example, backup script

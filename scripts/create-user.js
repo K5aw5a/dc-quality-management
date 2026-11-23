@@ -3,6 +3,9 @@
 // Usage: USER_PASSWORD='...' npm run create-user -- <username> [--admin]
 // The password comes from the environment so it doesn't end up in shell history.
 
+const { loadLocalEnv, defaultDbPath } = require('../src/config');
+
+loadLocalEnv();
 const { openDb } = require('../src/db');
 const { createUser } = require('../src/auth');
 
@@ -16,7 +19,7 @@ if (!username || !password) {
   process.exit(1);
 }
 
-const db = openDb(process.env.DB_PATH || './data/qm.db');
+const db = openDb(process.env.DB_PATH || defaultDbPath());
 try {
   createUser(db, username, password, role);
   console.log(`Created ${role} "${username}"`);
