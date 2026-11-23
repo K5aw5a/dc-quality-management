@@ -106,7 +106,7 @@ Put these in `local.env` (one `NAME=value` per line) or set them as environment 
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `DB_PATH` | `%LOCALAPPDATA%\\dc-quality\\qm.db` on Windows, `./data/qm.db` elsewhere | where the database lives |
+| `DB_PATH` | `%LOCALAPPDATA%\dc-quality\qm.db` on Windows, `./data/qm.db` elsewhere | where the database lives |
 | `PROJECT_NAME` | Quality Management | name shown in the top bar |
 | `LOGO_FILE` | none | path to a local logo image (.png / .jpg / .svg) for the top bar and sign-in page |
 | `PORT` / `HOST` | 3000 / 127.0.0.1 | where the app listens |
