@@ -12,7 +12,11 @@ function readImage(format) {
   return (buf) => ({ kind: 'image', pages: 1, tables: [], lines: [], text: '', scannedPages: [1], ocrImages: [{ page: 1, format, data: buf }], textItems: [] });
 }
 
+// Audit records (.json) are handled by src/audits.js, not read as documents.
+const auditJson = () => { throw new Error('this is an audit record; it is loaded on the Audits page'); };
+
 const KINDS = {
+  json: auditJson,
   xlsx: readXlsx, xlsm: readXlsx, csv: readCsv, txt: readCsv, docx: readDocx, docm: readDocx, pdf: readPdf,
   ...Object.fromEntries(Object.entries(IMAGE_FORMATS).map(([ext, fmt]) => [ext, readImage(fmt)])),
 };
@@ -22,7 +26,7 @@ function kindOf(filename, buf) {
   if (buf && buf.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf';
   if (ext === 'xls') throw new Error('old .xls files are not supported; open it in Excel and "Save As" .xlsx');
   if (ext === 'doc') throw new Error('old .doc files are not supported; open it in Word and "Save As" .docx');
-  if (!KINDS[ext]) throw new Error(`unsupported file type .${ext}; upload .xlsx, .csv, .docx, .pdf or a scan/photo (.jpg, .png, .tif)`);
+  if (!KINDS[ext]) throw new Error(`unsupported file type .${ext}; upload .xlsx, .csv, .docx, .pdf, a scan/photo (.jpg, .png, .tif) or an audit record (.json)`);
   return ext;
 }
 

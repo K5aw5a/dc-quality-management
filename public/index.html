@@ -8,6 +8,7 @@
   <script src="/theme.js"></script>
   <script src="/app.js" defer></script>
   <script src="/settings.js" defer></script>
+  <script src="/audits.js" defer></script>
 </head>
 <body>
   <section id="login-view" class="login" hidden>
@@ -34,6 +35,7 @@
           <a href="#/" data-route="dashboard">Dashboard</a>
           <a href="#/upload" data-route="upload">Upload</a>
           <a href="#/files" data-route="files">Files</a>
+          <a href="#/audits" data-route="audits">Audits</a>
           <details class="menu" data-group="r">
             <summary>Registers</summary>
             <div class="menu-panel" id="nav-registers"></div>
@@ -68,6 +70,7 @@
       <section id="view-upload" hidden></section>
       <section id="view-files" hidden></section>
       <section id="view-settings" hidden></section>
+      <section id="view-audits" hidden></section>
       <section id="view-register" hidden>
         <div class="page-head">
           <div><h1 id="reg-title"></h1><p id="reg-desc" class="reg-desc"></p><p id="reg-summary" class="muted"></p></div>

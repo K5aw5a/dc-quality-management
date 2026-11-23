@@ -98,6 +98,18 @@ const MIGRATIONS = [
     const dt = db.prepare('INSERT INTO doc_types (name, description, register, mode, keywords, updated_by) VALUES (?, ?, ?, ?, ?, ?)');
     for (const [name, desc, reg, mode, kw] of DOC_TYPE_SEED) dt.run(name, desc, reg, mode, JSON.stringify(kw), 'system');
   },
+  // 4: audit records (read-only view, loaded from audit-record.json files)
+  (db) => {
+    db.exec(`
+      CREATE TABLE audit_records (
+        id INTEGER PRIMARY KEY,
+        data TEXT NOT NULL,
+        upload_id INTEGER REFERENCES uploads(id) ON DELETE SET NULL,
+        uploaded_by TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `);
+  },
 ];
 
 // Starter document types (generic; edit in the app).

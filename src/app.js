@@ -12,6 +12,7 @@ const { dashboard } = require('./dashboard');
 const { writeXlsx } = require('./parsers/xlsx');
 const registry = require('./registry');
 const settings = require('./settings');
+const audits = require('./audits');
 
 const { HttpError } = resources;
 const MAX_JSON = 1024 * 1024;
@@ -137,6 +138,13 @@ function createApp({
         if (tab !== 'auto' && tab !== 'evidence') resources.getTab(db, tab);
         const buf = await readBody(req, MAX_UPLOAD);
         if (!buf.length) throw new HttpError(400, 'empty file');
+        if (/\.json$/i.test(url.searchParams.get('filename') || '')) {
+          // An audit record prepared in chat: validate, keep the file, show it on the Audits page.
+          const record = audits.parse(buf);
+          const { upload, previous } = uploads.store(db, uploadDir, { filename: url.searchParams.get('filename'), buf, user, tab: null });
+          const version = audits.save(db, record, upload, user);
+          return send(res, 201, { upload: uploads.get(db, upload.id), previous, analysis: { mode: 'audit-record', version, summary: audits.summary(record) } });
+        }
         const { upload, previous } = uploads.store(db, uploadDir, {
           filename: url.searchParams.get('filename'), buf, user,
           tab: tab === 'auto' || tab === 'evidence' ? docType?.register || null : tab,
@@ -245,6 +253,7 @@ function createApp({
       if (parts[0] === 'me') return send(res, 200, { user, project: projectName });
       if (parts[0] === 'schema') return send(res, 200, publicSchema(db));
       if (parts[0] === 'dashboard') return send(res, 200, dashboard(db));
+      if (parts[0] === 'audits') return send(res, 200, audits.latest(db));
       if (parts[0] === 'activity') return send(res, 200, { items: resources.activity(db, url.searchParams) });
       if (parts[0] === 'export.xlsx') {
         const stamp = resources.today();

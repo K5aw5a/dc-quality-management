@@ -298,3 +298,34 @@ label.inline { display: inline-flex !important; gap: 6px; align-items: center; }
   .area-row .bar { grid-column: 1 / -1; grid-row: 2; }
   .fields { grid-template-columns: 1fr; }
 }
+
+/* audits (read-only) */
+.tone-info { background: var(--accent-soft); color: var(--accent); }
+#view-audits { display: grid; gap: 18px; }
+.audit { display: grid; gap: 14px; }
+.audit-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; border-bottom: 2px solid var(--heading); padding-bottom: 8px; }
+.audit-head h2 { font-size: 19px; margin: 0; }
+.audit-head p { margin: 0; }
+.audit-meta { display: grid; gap: 2px; text-align: right; }
+.audit .kpis { margin-bottom: 0; }
+.prep-list ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.prep-list li { display: flex; gap: 10px; align-items: baseline; }
+.box { flex: none; width: 14px; height: 14px; border: 2px solid var(--muted); border-radius: 3px; transform: translateY(2px); }
+.box.done { background: var(--ok-bar); border-color: var(--ok-bar); }
+.area-ref { font-size: 12px; white-space: nowrap; }
+.area-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 12px; }
+.area-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.area-card h3 { font-size: 15px; margin: 0; }
+.area-card ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.area-card p { margin: 0; }
+.area-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.area-num { font-variant-numeric: tabular-nums; color: var(--muted); margin-right: 8px; font-weight: 500; }
+.blk h4, .ask h4 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 3px; font-weight: 600; }
+.ask { background: var(--accent-soft); border-radius: 6px; padding: 8px 10px; }
+.ask h4 { color: var(--accent); }
+.ask p + p { margin-top: 4px; }
+.gap li::marker { color: var(--bad-bar); }
+.fill { background: #fff3c4; color: #7a4a00; padding: 0 5px; border-radius: 4px; font-weight: 600; white-space: nowrap; }
+:root[data-theme="dark"] .fill { background: #3a3010; color: #ffd76a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .fill { background: #3a3010; color: #ffd76a; } }
+@media (max-width: 600px) { .audit-meta { text-align: left; } .area-top { flex-direction: column; } }

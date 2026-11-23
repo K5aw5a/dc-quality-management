@@ -45,6 +45,9 @@ This app gives you that picture without retyping anything:
 ### Document types (Settings → *Document types*)
 Named kinds of files you upload regularly. Each says which register it goes into, whether it's read as a **table**, a **single document** or kept as **evidence only**, which words in the file name identify it, a default audit item, and its saved column mapping. "Save as document type…" in an import preview creates one from the file in front of you.
 
+### Audits (read-only record)
+The **Audits** page keeps the record of each quality audit: preparation checklist, the 13 audit areas (what to say, what to show, gaps and questions to ask), findings, and the resulting action list with owners, dates and status. The page has no editing controls. The record is written outside the app as an `audit-record.json` file (for example prepared in chat) and loaded by uploading it on the Upload page. Every upload is kept as a version, and the latest one is shown.
+
 ### The starting registers
 All of them can be edited, renamed or archived.
 
@@ -137,11 +140,12 @@ src/ocr.js           OCR via Windows built-in OCR (PowerShell) or Tesseract
 src/values.js        dates / numbers / yes-no / status parsing
 src/importer.js      header detection, column mapping, preview planning, import
 src/dashboard.js     dashboard figures
+src/audits.js        audit records (validated JSON, versions, read-only view data)
 src/uploads.js       file storage (by content hash, outside git)
 src/resources.js     validation, records, optimistic concurrency, activity log
 src/db.js            SQLite, migrations, additive table sync
 src/app.js           HTTP routes, security headers
-public/              frontend (app.js, settings.js, theme.js, styles.css)
+public/              frontend (app.js, settings.js, audits.js, theme.js, styles.css)
 test/                node:test suite and synthetic fixtures
 deploy/              systemd, nginx, env example, backup script
 ```

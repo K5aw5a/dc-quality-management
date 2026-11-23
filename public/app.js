@@ -175,6 +175,7 @@ function route() {
     showRegister(parts[1], parts[2] ? Number(parts[2]) : null);
   } else if (key === 'upload') showUpload(parts[1] ? Number(parts[1]) : null, params);
   else if (key === 'files') showFiles();
+  else if (key === 'audits') showAudits(parts[2] ? `area-${parts[2]}` : parts[1]);
   else if (key === 'settings') { key = `settings/${parts[1] === 'doctypes' ? 'doctypes' : 'registers'}`; showSettings(parts.slice(1), params); }
   else { key = 'dashboard'; showDashboard(); }
   for (const a of document.querySelectorAll('.nav a')) {
@@ -331,7 +332,7 @@ function table(headers, rows) {
 async function showUpload(uploadId, params) {
   const v = show('#view-upload');
   const preTab = params.get('tab') || 'auto';
-  const file = el('input', { type: 'file', accept: '.xlsx,.xlsm,.csv,.docx,.pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp', hidden: true });
+  const file = el('input', { type: 'file', accept: '.xlsx,.xlsm,.csv,.docx,.pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp,.json', hidden: true });
   const fileName = el('span', { class: 'muted', text: 'Excel (.xlsx), CSV, Word (.docx), PDF (incl. scanned) or a photo/scan (.jpg, .png, .tif) · up to 25 MB' });
   const drop = el('div', { class: 'drop', tabIndex: 0, role: 'button' }, el('strong', { text: 'Drop a file here or click to choose' }), fileName, file);
   const docLabel = (d) => `${d.name}${d.mode === 'evidence' ? ' (evidence)' : d.register && S.tabs[d.register] ? ` → ${S.tabs[d.register].label}` : ''}`;
@@ -416,6 +417,10 @@ function renderResult(box, upload, a, previous) {
     upload.checklist_ref ? ` · evidence for audit item ${upload.checklist_ref}` : ''));
   if (previous) parts.push(el('p', { class: 'note tone-warn', text: `This exact file was already uploaded on ${fmtWhen(previous.created_at)} as "${previous.filename}". Importing again only applies differences.` }));
 
+  if (a?.mode === 'audit-record') {
+    parts.push(el('p', { class: 'note tone-ok' }, el('strong', { text: 'Audit record loaded ' }), `(version ${a.version}): ${a.summary}. `, el('a', { href: '#/audits', text: 'Open Audits' })));
+    return box.replaceChildren(...parts);
+  }
   if (!a || a.mode === 'evidence') {
     const dt = upload.doc_type_id ? S.docTypes.find((d) => d.id === upload.doc_type_id) : null;
     parts.push(el('p', { class: 'note tone-ok', text: `Stored as evidence${dt ? ` (${dt.name})` : ''}.${upload.checklist_ref ? '' : ' Tip: pick an audit item above when uploading so it counts as evidence for that item.'}` }));
@@ -617,6 +622,7 @@ async function showFiles() {
   v.replaceChildren(el('p', { class: 'muted', text: 'Loading…' }));
   const { items } = await api('uploads');
   const statusBadge = (u) => {
+    if (u.summary?.auditRecord) return badge(`Audit record v${u.summary.version}`, 'ok');
     if (u.status === 'imported') return badge(`Imported${u.summary ? ` · ${u.summary.created} new, ${u.summary.updated} upd.` : ''}`, 'ok');
     if (u.status === 'analysed') return badge('Read, not imported', 'warn');
     if (u.status === 'failed') return badge('Could not read', 'bad');
@@ -630,7 +636,7 @@ async function showFiles() {
     el('td', { text: u.checklist_ref || '' }),
     el('td', { text: u.uploaded_by }),
     el('td', {},
-      el('a', { href: `#/upload/${u.id}`, text: u.status === 'imported' ? 'Re-import' : 'Review & import' }),
+      u.kind === 'json' ? el('a', { href: '#/audits', text: 'Open Audits' }) : el('a', { href: `#/upload/${u.id}`, text: u.status === 'imported' ? 'Re-import' : 'Review & import' }),
       S.user.role === 'admin' ? el('button', {
         type: 'button', class: 'link', text: ' · Delete',
         onclick: async () => { if (confirm(`Delete ${u.filename}? Records already imported stay.`)) { await api(`uploads/${u.id}`, { method: 'DELETE' }); showFiles(); } },
