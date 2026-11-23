@@ -110,6 +110,22 @@ const MIGRATIONS = [
       );
     `);
   },
+  // 5: ITP activities register (activity lines of the ITP) for existing installs
+  (db) => {
+    const exists = db.prepare('SELECT 1 FROM registers WHERE name = ?').get('itp_activities');
+    if (!exists) {
+      const def = registry.defaultDefs().find((r) => r.name === 'itp_activities');
+      const after = db.prepare("SELECT position FROM registers WHERE name = 'itps'").get();
+      const pos = after ? after.position + 1 : (db.prepare('SELECT MAX(position) AS p FROM registers').get().p ?? -1) + 1;
+      db.prepare('UPDATE registers SET position = position + 1 WHERE position >= ?').run(pos);
+      db.prepare('INSERT INTO registers (name, builtin, def, position, updated_by) VALUES (?, ?, ?, ?, ?)')
+        .run(def.name, def.builtin, JSON.stringify(def.def), pos, 'system');
+    }
+    if (!db.prepare('SELECT 1 FROM doc_types WHERE name = ?').get('ITP activity table')) {
+      db.prepare('INSERT INTO doc_types (name, description, register, mode, keywords, updated_by) VALUES (?, ?, ?, ?, ?, ?)')
+        .run('ITP activity table', 'The ITP in Excel: activity lines grouped under sections, with S / GC / CR inspection points.', 'itp_activities', 'table', JSON.stringify(['inspection and test plan']), 'system');
+    }
+  },
 ];
 
 // Starter document types (generic; edit in the app).

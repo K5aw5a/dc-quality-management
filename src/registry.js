@@ -58,6 +58,7 @@ function fromDefault(name) {
     key: [...t.key], display: [...t.display], statusField,
     due: t.due || null, dueLabel: t.dueLabel || null, soonDays: t.soonDays || 14, reason: t.reason || null,
     keyPattern: t.keyPattern ? t.keyPattern.source : null,
+    sectionField: t.sectionField || null,
     age: AGE_DEFAULTS[name] || null,
     columns,
   };
@@ -69,6 +70,7 @@ const DESCRIPTIONS = {
   deliveries: 'Purchase orders and expected/actual deliveries, with submittal approval and material inspection (MIR) checks.',
   materials: 'Materials on site: delivered, stored, installed and remaining quantities, expiry and installer/area.',
   itps: 'Inspection and test plans: one row per ITP with revision, approval status and linked checklists.',
+  itp_activities: 'Activity lines of the ITP, grouped by section, with controlling and verifying documents and the inspection points for subcontractor (S), general contractor (GC) and client representative (CR).',
   benchmarks: 'Benchmarks / first-of-kind (FOK) installations to be inspected and approved before rollout.',
   issues: 'Issues, snags and non-conformance reports with owner, target date and status.',
   calibration: 'Test and measuring equipment with calibration dates, due dates and certificates.',
@@ -150,6 +152,7 @@ function sanitize(input, prev) {
   const statusField = isCol(rk(input.statusField), (c) => c.type === 'enum') ? rk(input.statusField) : null;
   const due = isCol(rk(input.due), (c) => c.type === 'date') ? rk(input.due) : null;
   const reason = isCol(rk(input.reason)) ? rk(input.reason) : null;
+  const sectionField = isCol(rk(input.sectionField), (c) => ['string', 'text'].includes(c.type)) ? rk(input.sectionField) : null;
   let age = null;
   if (input.age && isCol(rk(input.age.from), (c) => c.type === 'date')) {
     const statusOpts = statusField ? visible.find((c) => c.key === statusField).options : [];
@@ -164,7 +167,7 @@ function sanitize(input, prev) {
     label, singular: str(input.singular, 60) || label.replace(/s$/i, ''), description: str(input.description, 1000),
     keywords: [...new Set(list(input.keywords, 60))].slice(0, 30), key, display, statusField, due,
     dueLabel: str(input.dueLabel, 40) || null, soonDays: Number.isInteger(soon) && soon > 0 && soon <= 365 ? soon : 14,
-    reason, keyPattern, age, columns,
+    reason, keyPattern, age, sectionField, columns,
   };
 }
 
@@ -206,6 +209,7 @@ function compile(name, builtin, def) {
     statusField: status ? def.statusField : null,
     due: def.due && fields[def.due] ? def.due : null, dueLabel: def.dueLabel, soonDays: def.soonDays || 14,
     reason: def.reason && fields[def.reason] ? def.reason : null,
+    sectionField: def.sectionField && fields[def.sectionField] ? def.sectionField : null,
     age: def.age && fields[def.age.from] ? def.age : null,
     fields, computed, list,
     done: status ? status.options.filter((o) => o.done).map((o) => o.value) : [],

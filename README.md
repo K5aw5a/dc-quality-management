@@ -28,7 +28,7 @@ This app gives you that picture without retyping anything:
 ## What's inside
 
 ### Reading documents
-- **Spreadsheets and tables:** finds the header row even under a summary block, and matches columns by name ("Submittal No", "Doc no" → *Ref*; "Next due", "Valid until" → *Due date*).
+- **Spreadsheets and tables:** finds the header row even under a summary block or split over two rows (e.g. *Inspection By* over *S / GC / CR*), recognises section title rows (e.g. *1. Pre-installation*) and files the rows below under that section, and matches columns by name ("Submittal No", "Doc no" → *Ref*; "Next due", "Valid until" → *Due date*).
 - **Single documents** such as a calibration certificate, an NCR form or an ITP cover sheet: reads `Label: value` pairs into a pre-filled form to check and save.
 - **Scanned PDFs and photos** with OCR. On Windows 10/11 it uses the OCR engine built into Windows (nothing to install); on servers it uses Tesseract.
 - **Messy values:** day-first dates (`17/09/2026`, `17-Sep-26`, Spanish month names, Excel dates), EU/UK numbers, yes/no (`Y`, `✓`), review codes (`Code B` → *Approved as noted*), and common OCR slips (O/0, l/1).
@@ -39,7 +39,7 @@ This app gives you that picture without retyping anything:
 - **Columns:** add, rename, reorder, hide, make required. Types are text, long text, status/choice, date, number, yes/no and link.
 - **Headings in files that mean each column**, which drive the automatic matching.
 - **Status options** with a colour (green / amber / red / grey) and flags: *done* (never overdue, counts as ready), *on hold* (listed with its reason on the dashboard), *N/A* (left out of readiness %).
-- **Rules:** what identifies a record, the title, the due-date column and "due soon" window, the hold-reason column, and an age counter (e.g. *Days in review*).
+- **Rules:** what identifies a record, the title, which column section titles fill, the due-date column and "due soon" window, the hold-reason column, and an age counter (e.g. *Days in review*).
 - **Create** your own registers (Procedures, Training/TBT, RFIs…) or **archive** ones you don't use. Hidden columns and archived registers keep their data; nothing is deleted.
 
 ### Document types (Settings → *Document types*)
@@ -58,6 +58,7 @@ All of them can be edited, renamed or archived.
 | Delivery tracker | PO, item, supplier, qty, expected / actual date, status, submittal approved?, MIR done? |
 | Material tracker | item, delivered qty, location, installed qty, remaining, expiry, installer / area |
 | ITP register | ITP no., activity, system, rev, approval status, linked checklists |
+| ITP activities | section, item no., activity, controlling document, requirement, frequency, inspection points S / GC / CR (H hold, W witness, R review, M monitor, I inspect), verifying document |
 | Benchmark / FOK register | item, system, location, responsible party, status, approval date, comments |
 | Issues / NCR log | ID, type, description, location, owner, raised, target, status, age |
 | Calibration register | ID, equipment, make / model, cal date, due date, certificate |

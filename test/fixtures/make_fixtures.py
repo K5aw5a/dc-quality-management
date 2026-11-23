@@ -62,4 +62,24 @@ subprocess.run(['tiff2pdf', '-o', os.path.join(D, 'scan-cert-g4.pdf'), os.path.j
 ncr.resize((1240, 1754)).save(os.path.join(tmp, 'ncr-small.png'))
 c = canvas.Canvas(os.path.join(D, 'scan-ncr-flate.pdf'), pagesize=A4)
 c.drawImage(os.path.join(tmp, 'ncr-small.png'), 0, 0, width=A4[0], height=A4[1]); c.showPage(); c.save()
+# ITP activity table: title rows, two-row header ("Inspection By" merged over S / GC / CR),
+# 8 section rows merged across the table, activities with point codes.
+from openpyxl.styles import Font
+wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'ITP'
+ws['A1'] = 'INSPECTION AND TEST PLAN'; ws['A2'] = 'ITP No: DEMO-ITP-001   Rev: 02'
+hdr = ['Item No.', 'Activity', 'Controlling Document', 'Requirement', 'Frequency', 'Inspection By', None, None, 'Verifying Document']
+for c, h in enumerate(hdr, 1):
+    if h: ws.cell(4, c, h).font = Font(bold=True)
+ws.merge_cells('F4:H4'); ws.merge_cells('A4:A5'); ws.merge_cells('B4:B5'); ws.merge_cells('I4:I5')
+for c, h in zip((6, 7, 8), ('S', 'GC', 'CR')): ws.cell(5, c, h)
+sections = ['PRE-INSTALLATION', 'MATERIAL RECEIPT', 'CONTAINMENT', 'CABLING', 'TERMINATION', 'PANEL INSTALLATION', 'TESTING', 'HANDOVER']
+r = 6
+for n, sec in enumerate(sections, 1):
+    ws.cell(r, 1, f'{n}.0'); ws.cell(r, 2, sec); ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=9); r += 1
+    for k in range(1, 3):
+        ws.cell(r, 1, f'{n}.{k}'); ws.cell(r, 2, f'{sec.title()} activity {k}'); ws.cell(r, 3, 'Spec section 26 05')
+        ws.cell(r, 4, 'As per approved drawings'); ws.cell(r, 5, 'Each area' if k == 1 else '10%')
+        ws.cell(r, 6, 'H' if k == 1 else 'W'); ws.cell(r, 7, 'W' if k == 1 else 'R'); ws.cell(r, 8, 'R' if k == 1 else 'M')
+        ws.cell(r, 9, 'QC checklist QC-0' + str(n)); r += 1
+wb.save(os.path.join(D, 'itp.xlsx'))
 print('fixtures written to', D)

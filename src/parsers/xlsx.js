@@ -89,7 +89,15 @@ function readXlsx(buf) {
     if (!xml) continue;
     if (attr(sheet, 'state') === 'hidden' || attr(sheet, 'state') === 'veryHidden') continue;
     const rows = [];
-    for (const row of findAll(parseXml(xml), 'row')) {
+    const sheetXml = parseXml(xml);
+    // merged ranges (0-based, inclusive): used for two-row headers and section titles
+    const merges = findAll(sheetXml, 'mergeCell').map((m) => {
+      const [a1, b1] = String(attr(m, 'ref') || '').split(':');
+      const pos = (ref) => { const mm = /^([A-Z]+)(\d+)$/.exec(ref || ''); return mm ? [Number(mm[2]) - 1, colIndex(mm[1])] : null; };
+      const p0 = pos(a1); const p1 = pos(b1 || a1);
+      return p0 && p1 ? { r0: p0[0], c0: p0[1], r1: p1[0], c1: p1[1] } : null;
+    }).filter(Boolean);
+    for (const row of findAll(sheetXml, 'row')) {
       const r = Number(attr(row, 'r')) || rows.length + 1;
       if (r > MAX_ROWS) break;
       const cells = [];
@@ -117,7 +125,7 @@ function readXlsx(buf) {
       while (rows.length < r - 1) rows.push([]);
       rows[r - 1] = cells;
     }
-    tables.push({ name: `Sheet "${name}"`, rows });
+    tables.push({ name: `Sheet "${name}"`, rows, merges });
   }
   return { kind: 'xlsx', tables, text: tables.map((t) => t.rows.map((r) => r.join(' \t ')).join('\n')).join('\n\n') };
 }

@@ -77,20 +77,68 @@ function scoreHeader(T, cells, docMap) {
   return { ...m, score: m.total + (keyHit ? 1 : 0) + reqHit * 0.5, keyHit };
 }
 
+const cellsAt = (table, r) => (table.layout ? (table.layout[r]?.cells || []).map((c) => c.text) : table.rows[r] || []).map((c) => String(c ?? '').trim());
+
+// Two-row header: a parent heading (often merged across columns, e.g. "Inspection By")
+// over short sub-headings ("S", "GC", "CR"). Returns the combined headings or null.
+function combinedHeader(table, r) {
+  if (table.layout || r + 1 >= table.rows.length) return null;
+  const base = cellsAt(table, r); const sub = cellsAt(table, r + 1);
+  const subCells = sub.map((v, i) => [i, v]).filter(([, v]) => v);
+  const baseCount = base.filter(Boolean).length;
+  if (!subCells.length || subCells.length >= baseCount || subCells.some(([, v]) => v.length > 25)) return null;
+  const mergeAt = (i) => (table.merges || []).find((m) => m.r0 <= r && m.r1 >= r && m.c0 <= i && m.c1 >= i && m.c1 > m.c0);
+  // every sub-heading must sit under a merged parent or an empty cell next to one
+  const parentAt = (i) => {
+    const m = mergeAt(i);
+    if (m) return cellsAt(table, m.r0)[m.c0] || '';
+    if (!base[i]) for (let j = i - 1; j >= 0; j--) if (base[j]) return sub[j] ? base[j] : '';
+    return base[i] && (!base[i + 1] && sub[i + 1]) ? base[i] : null;
+  };
+  if (subCells.some(([i]) => parentAt(i) === null || parentAt(i) === '')) return null;
+  const width = Math.max(base.length, sub.length);
+  return Array.from({ length: width }, (_, i) => (sub[i] ? `${parentAt(i)} ${sub[i]}`.trim() : base[i] || ''));
+}
+
+// Best reading of row r as a header: on its own, or combined with the sub-heading row below.
+function headerAt(T, table, r, docMap) {
+  const single = cellsAt(table, r);
+  const one = scoreHeader(T, single, docMap);
+  const combo = combinedHeader(table, r);
+  const two = combo ? scoreHeader(T, combo, docMap) : null;
+  if (two && (!one || two.score > one.score)) return { ...two, row: r, span: 2, cells: combo };
+  return one ? { ...one, row: r, span: 1, cells: single } : null;
+}
+
 function findHeader(T, table, docMap) {
   let best = null;
   const limit = Math.min(table.rows.length, table.layout ? 400 : HEADER_SCAN_ROWS);
   for (let r = 0; r < limit; r++) {
-    const s = scoreHeader(T, table.rows[r] || [], docMap);
-    if (s && (!best || s.score > best.score)) best = { ...s, row: r };
+    const h = headerAt(T, table, r, docMap);
+    if (h && (!best || h.score > best.score)) best = h;
   }
   return best;
 }
 
+// A row that only carries a section title ("1. PRE-INSTALLATION"): a merged cell
+// across most of the row, a single filled cell, or a section number plus a title.
+function isSectionRow(table, rowIndex, filled) {
+  if (!filled.length) return false;
+  if ((table.merges || []).some((m) => m.r0 === rowIndex && m.c1 - m.c0 >= 2 && m.c0 <= filled[0][0])) return true;
+  if (filled.length === 1) return filled[0][1].length > 2;
+  return filled.length === 2 && /^\d{1,2}(\.0+)?\.?$/.test(filled[0][1]) && /[A-Za-z]{3}/.test(filled[1][1]);
+}
+
+function sectionLabel(filled) {
+  const vals = filled.map(([, v]) => v);
+  if (vals.length >= 2 && /^\d{1,2}(\.0+)?\.?$/.test(vals[0])) return `${vals[0].replace(/(\.0+)?\.?$/, '')}. ${vals.slice(1).join(' ')}`;
+  return vals.join(' ');
+}
+
 // Rows under the header, as arrays aligned to the header's columns.
-function dataRows(table, headerRow, keyCols) {
+function dataRows(table, headerRow, keyCols, span = 1) {
   if (!table.layout) {
-    return table.rows.slice(headerRow + 1).map((cells, i) => ({ line: headerRow + i + 2, cells }));
+    return table.rows.slice(headerRow + span).map((cells, i) => ({ line: headerRow + span + i + 1, cells }));
   }
   // PDF/OCR: re-split each line by the header's column positions, and fold
   // wrapped lines (no value in the key column) into the row above.
@@ -323,7 +371,9 @@ function analyseFull(db, extracted, opts = {}) {
     const T = reg.tabs[wanted];
     const row = Number.isInteger(opts.headerRow) ? opts.headerRow : findHeader(T, table, docMap)?.row;
     if (row !== undefined && row !== null && table.rows[row]) {
-      chosen = { tab: wanted, table: opts.table, header: { row, ...mapHeaders(T, (table.layout ? table.layout[row].cells.map((c) => c.text) : table.rows[row]).map((c) => String(c ?? '')), docMap) } };
+      const h = headerAt(T, table, row, docMap);
+      const cells = h ? h.cells : cellsAt(table, row);
+      chosen = { tab: wanted, table: opts.table, header: { row, span: h ? h.span : 1, cells, ...mapHeaders(T, cells, docMap) } };
     }
   } else if (wanted && mode === 'fields' && (!chosen || chosen.table !== null)) {
     chosen = { tab: wanted, table: null, fields: readFields(reg.tabs[wanted], extracted, docMap) };
@@ -338,8 +388,8 @@ function analyseFull(db, extracted, opts = {}) {
     const row = rows.findIndex((r) => r.filter((c) => String(c ?? '').trim()).length >= 2);
     if (row >= 0 && row < rows.length - 1) {
       const T = reg.tabs[wanted];
-      const cells = (tables[ti].layout ? tables[ti].layout[row].cells.map((c) => c.text) : rows[row]).map((c) => String(c ?? ''));
-      chosen = { tab: wanted, table: ti, header: { row, ...mapHeaders(T, cells, docMap) }, unmatched: true };
+      const cells = cellsAt(tables[ti], row);
+      chosen = { tab: wanted, table: ti, header: { row, span: 1, cells, ...mapHeaders(T, cells, docMap) }, unmatched: true };
     }
   }
 
@@ -367,7 +417,8 @@ function analyseFull(db, extracted, opts = {}) {
 
   const table = tables[chosen.table];
   const headerRow = chosen.header.row;
-  const headers = (table.layout ? table.layout[headerRow].cells.map((c) => c.text) : table.rows[headerRow]).map((c) => String(c ?? '').trim());
+  const headerSpan = chosen.header.span || 1;
+  const headers = (chosen.header.cells || cellsAt(table, headerRow)).map((c) => String(c ?? '').trim());
   const autoMapping = chosen.header.mapping.slice(0, headers.length);
   while (autoMapping.length < headers.length) autoMapping.push(null);
   let mapping = autoMapping;
@@ -383,8 +434,14 @@ function analyseFull(db, extracted, opts = {}) {
   const exclude = new Set(opts.exclude || []);
 
   const proposals = [];
-  for (const { line, cells } of dataRows(table, headerRow, keyCols)) {
-    if (!cells.some((c) => String(c ?? '').trim())) continue;
+  let section = null; let sections = 0;
+  for (const { line, cells } of dataRows(table, headerRow, keyCols, headerSpan)) {
+    const filled = cells.map((c, i) => [i, String(c ?? '').trim()]).filter(([, v]) => v);
+    if (!filled.length) continue;
+    if (T.sectionField && !mapping.includes(T.sectionField) && isSectionRow(table, line - 1, filled)) {
+      section = sectionLabel(filled); sections++;
+      continue;
+    }
     const values = {}; const warnings = [];
     mapping.forEach((f, i) => {
       if (!f) return;
@@ -393,11 +450,13 @@ function analyseFull(db, extracted, opts = {}) {
       else if (c.value !== null) values[f] = c.value;
     });
     if (!Object.keys(values).length) continue;
+    if (T.sectionField && section && (values[T.sectionField] === undefined || values[T.sectionField] === null)) values[T.sectionField] = section;
     proposals.push({ line, values, warnings, excluded: exclude.has(line) });
   }
   const p = plan(db, T, proposals);
   return {
-    ...base, mode: 'table', tab: chosen.tab, table: chosen.table, headerRow, headers, mapping, autoMapping, unmatched: !!chosen.unmatched,
+    ...base, mode: 'table', tab: chosen.tab, table: chosen.table, headerRow, headerSpan, headers, mapping, autoMapping, unmatched: !!chosen.unmatched,
+    sectionField: T.sectionField && !mapping.includes(T.sectionField) ? T.sectionField : null, sections,
     counts: p.counts, total: p.rows.length, rows: p.rows, // trimmed to PREVIEW_ROWS by analyse()
   };
 }

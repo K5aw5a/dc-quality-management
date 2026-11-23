@@ -491,7 +491,9 @@ function renderResult(box, upload, a, previous) {
   const excluded = new Set(a.rows.filter((r) => r.warnings.includes('excluded by you')).map((r) => r.line));
   const mapped = a.mapping.map((f, i) => ({ f, i })).filter((x) => x.f);
   const fieldOptions = [el('option', { value: '', text: '— ignore —' }), ...Object.entries(tab.fields).map(([f, d]) => el('option', { value: f, text: d.label }))];
+  const secField = a.sectionField; // filled from section title rows, not from a column
   const mapRow = el('tr', { class: 'map-row' }, el('th', { text: 'Column in file' }), el('th', { text: '→ field' }),
+    secField ? el('th', {}, el('div', { class: 'src-head', text: `${a.sections || 0} section rows` }), el('span', { class: 'small muted', text: 'from section titles' })) : null,
     a.headers.map((h, i) => {
       const s = el('select', { title: h }, fieldOptions.map((o) => o.cloneNode(true)));
       s.value = a.mapping[i] || '';
@@ -531,6 +533,7 @@ function renderResult(box, upload, a, previous) {
     const tr = el('tr', { class: r.action === 'skip' ? 'skipped' : '' },
       el('td', {}, box2, ' ', el('span', { class: 'muted small', text: `#${r.line}` })),
       el('td', {}, actionBadge(r)),
+      secField ? el('td', { class: 'clip', text: r.values[secField] || '' }) : null,
       a.mapping.map((f) => {
         if (!f) return el('td', { class: 'muted' });
         const td = el('td', {}, valueNode(a.tab, f, r.values[f], r.values));
@@ -546,7 +549,7 @@ function renderResult(box, upload, a, previous) {
     return tr;
   }));
   const wrap = el('div', { class: 'table-wrap' }, el('table', {},
-    el('thead', {}, mapRow, el('tr', {}, el('th', { text: 'Row' }), el('th', { text: 'Action' }),
+    el('thead', {}, mapRow, el('tr', {}, el('th', { text: 'Row' }), el('th', { text: 'Action' }), secField ? el('th', { text: tab.fields[secField]?.label || 'Section' }) : null,
       a.mapping.map((f) => el('th', { text: f ? tab.fields[f].label : '' })), el('th', { text: 'Notes' }))),
     body));
 

@@ -45,6 +45,18 @@ const REVIEW = {
   },
 };
 
+// Inspection point codes used in ITPs (who inspects at each activity).
+const POINT = {
+  type: 'enum',
+  values: ['h', 'w', 'r', 'm', 'i'],
+  labels: { h: 'H · Hold', w: 'W · Witness', r: 'R · Review', m: 'M · Monitor', i: 'I · Inspect' },
+  tones: { h: 'bad', w: 'warn', r: 'ok', m: 'muted', i: 'muted' },
+  map: {
+    h: ['h', 'hold', 'hold point', 'hp'], w: ['w', 'witness', 'witness point', 'wp'], r: ['r', 'review', 'document review', 'rv'],
+    m: ['m', 'monitor', 'monitoring', 'surveillance', 's'], i: ['i', 'inspect', 'inspection', 'insp'],
+  },
+};
+
 const TABS = {
   checklist: {
     label: 'Audit checklist',
@@ -194,6 +206,30 @@ const TABS = {
     done: ['approved', 'approved_as_noted', 'superseded'],
     hold: ['on_hold'],
     reason: 'notes',
+  },
+
+  itp_activities: {
+    label: 'ITP activities',
+    singular: 'Activity',
+    keywords: ['itp', 'inspection and test plan', 'inspection & test plan', 'inspection test plan'],
+    key: ['item_no'],
+    display: ['item_no', 'activity'],
+    sectionField: 'section', // rows that only carry a section title fill this column for the rows below
+    fields: {
+      section: { label: 'Section', type: 'string', aliases: ['section', 'phase', 'stage', 'activity group'] },
+      item_no: { label: 'Item No.', type: 'string', required: true, max: 20, aliases: ['item no', 'item number', 'item', 'no', 'ref', 'item ref'] },
+      activity: { label: 'Activity', type: 'text', required: true, aliases: ['activity', 'activities', 'inspection activity', 'description', 'task'] },
+      controlling_document: { label: 'Controlling Document', type: 'string', aliases: ['controlling document', 'controlling documents', 'control document', 'reference document', 'reference documents', 'reference', 'specification', 'standard', 'procedure'] },
+      requirement: { label: 'Requirement', type: 'text', aliases: ['requirement', 'requirements', 'acceptance criteria', 'criteria', 'acceptance'] },
+      frequency: { label: 'Frequency', type: 'string', aliases: ['frequency', 'extent', 'sampling', 'sample'] },
+      insp_s: { ...POINT, label: 'S', aliases: ['inspection by s', 's', 'subcontractor', 'sub contractor', 'sc'] },
+      insp_gc: { ...POINT, label: 'GC', aliases: ['inspection by gc', 'gc', 'general contractor', 'main contractor', 'mc'] },
+      insp_cr: { ...POINT, label: 'CR', aliases: ['inspection by cr', 'cr', 'client representative', 'client rep', 'client'] },
+      verifying_document: { label: 'Verifying Document', type: 'string', aliases: ['verifying document', 'verifying documents', 'verification document', 'verifying record', 'record', 'records', 'evidence', 'form', 'checklist'] },
+    },
+    list: ['section', 'item_no', 'activity', 'controlling_document', 'requirement', 'frequency', 'insp_s', 'insp_gc', 'insp_cr', 'verifying_document'],
+    done: [],
+    hold: [],
   },
 
   benchmarks: {
