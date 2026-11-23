@@ -136,7 +136,7 @@ Everything stays on the machine running the app: the database at `DB_PATH` and u
 
 - **Stack:** Node.js standard library only (`node:http`, `node:sqlite`, `node:crypto`, `node:test`); no runtime dependencies, no build step. Vanilla JS frontend. File readers (zip/xlsx/docx/pdf, PNG/TIFF encoders) are written in-house.
 - **Tests:** `npm test` covers readers, OCR (real Tesseract tests are skipped when it isn't installed), value parsing, upload → preview → import, learning, register and document-type editing, dashboard figures, security, and database upgrades. Fixtures in `test/fixtures` are synthetic (`make_fixtures.py` regenerates them).
-- **Docs:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/DECISIONS.md`](docs/DECISIONS.md), [`docs/ROADMAP.md`](docs/ROADMAP.md).
+- **Docs:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/DECISIONS.md`](docs/DECISIONS.md), [`docs/ROADMAP.md`](docs/ROADMAP.md), and [`docs/PRIVATE_PAGES.md`](docs/PRIVATE_PAGES.md) (private pages kept outside the repo and how they are updated).
 - **Deploy:** `deploy/` has a systemd unit, an nginx config, an env example and an encrypted backup script. CI runs the tests on every push.
 
 ```
